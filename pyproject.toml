@@ -1,0 +1,40 @@
+[project]
+name = "tesis-code"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+experiments = [
+    "torch",
+    "torchvision",
+    "pytorch3d==0.7.8+pt2.8.0cu129",
+    "point-cloud-utils",
+    "torch-geometric",
+    "torch-cluster",
+    "trimesh",
+    "pyvista",
+    "scikit-learn",
+    "marimo>=0.23.9",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+environments = ["sys_platform == 'linux'", "sys_platform == 'win32'"]
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+
+pytorch3d = [
+    { url = "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.8/pytorch3d-0.7.8%2Bpt2.8.0cu129-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+    { url = "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.8/pytorch3d-0.7.8%2Bpt2.8.0cu129-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux'" }
+]
+
+torch-cluster = [
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu129/torch_cluster-1.6.3%2Bpt28cu129-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu129/torch_cluster-1.6.3%2Bpt28cu129-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux'" }
+]
