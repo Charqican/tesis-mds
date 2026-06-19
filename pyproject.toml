@@ -1,11 +1,10 @@
 [project]
 name = "tesis-code"
 version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = []
-
-[dependency-groups]
-experiments = [
+requires-python = "==3.12.*"
+dependencies = [
+    "loguru>=0.7.3",
+    "rich>=15.0.0",
     "torch",
     "torchvision",
     "pytorch3d==0.7.8+pt2.8.0cu129",
@@ -15,7 +14,17 @@ experiments = [
     "trimesh",
     "pyvista",
     "scikit-learn",
+]
+
+[dependency-groups]
+experiments = [
+    "fastparquet>=2026.5.0",
     "marimo>=0.23.9",
+    "matplotlib>=3.11.0",
+    "pandas>=3.0.3",
+    "plotly>=6.8.0",
+    "pyarrow>=24.0.0",
+    "sns>=0.1",
 ]
 
 [tool.uv]
