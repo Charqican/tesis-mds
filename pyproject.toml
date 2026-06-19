@@ -26,7 +26,11 @@ experiments = [
     "pyarrow>=24.0.0",
     "sns>=0.1",
 ]
-
+test = [
+    "pytest>=9.1.0",
+]
+[tool.pytest.ini_options]
+pythonpath = ["src"]
 [tool.uv]
 index-strategy = "unsafe-best-match"
 environments = ["sys_platform == 'linux'", "sys_platform == 'win32'"]
