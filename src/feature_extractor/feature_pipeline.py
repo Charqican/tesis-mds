@@ -1,10 +1,10 @@
-# src/feature_extractor/pipeline.py
-
-import torch
-from feature_extractor.config import FeatureConfig
-from feature_extractor.sampling import sample_fibonacci_views
-from feature_extractor.rendering import render_point_cloud
 from feature_extractor.backprojection import aggregate_features
+from feature_extractor.config import FeatureConfig
+from feature_extractor.rendering import render_point_cloud
+from feature_extractor.sampling import sample_fibonacci_views
+from logger import pipeline_logger
+import numpy as np
+import torch
 
 
 def extract_features(
@@ -25,12 +25,19 @@ def extract_features(
     """
     device = point_cloud.device
     model = model.to(device)
-
-    # Fibonacci sampling vies & camera
+    pipeline_logger.info(
+        f"Starting feature extraction | points={len(point_cloud)} device={device}"
+    )
+    # Fibonacci sampling views & camera
     R, T = sample_fibonacci_views(point_cloud, config)
 
+    # subsampling, default : 1000
+    if config.max_points is not None:
+        point_cloud = _subsample(point_cloud, config.max_points)
+        pipeline_logger.info(f"Subsampled to {len(point_cloud)} points")
+
     # obtain pixel-point mappings for every rendered view
-    rendered_images, mappings = render_point_cloud(point_cloud, R, T, config)
+    rendered_images, mappings = point_cloud, R, T, config
 
     # DINOv2 features
     with torch.no_grad():
@@ -38,5 +45,21 @@ def extract_features(
 
     # interpolate features to full resolution & backproject features to 3D space
     features = aggregate_features(model_outputs, mappings, point_cloud, config)
+    pipeline_logger.info(f"Done | features={features.shape}")
 
     return features
+
+
+def _subsample(point_cloud: torch.Tensor, max_points: int) -> torch.Tensor:
+    """
+    Subsamplea aleatoriamente la nube a max_points puntos.
+    Seed fija para reproducibilidad.
+    """
+    if len(point_cloud) <= max_points:
+        return point_cloud
+
+    np.random.seed(0)
+    indices = torch.from_numpy(
+        np.random.choice(len(point_cloud), max_points, replace=False)
+    )
+    return point_cloud[indices]

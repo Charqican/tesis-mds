@@ -1,5 +1,6 @@
 import torch
 import torch.nn
+import numpy as np
 from pytorch3d.structures import Pointclouds
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
@@ -9,6 +10,7 @@ from pytorch3d.renderer import (
 )
 from pytorch3d.renderer.points.rasterizer import PointFragments
 from feature_extractor.config import FeatureConfig
+from logger import rendering_logger
 
 # rot_aug=(0,1,2,3,4) → (0) VS (0,180) VS (0,90,270) VS (0,90,180,270) VS (0,0,0,0)
 _ROTATION_MAPS = {
@@ -80,6 +82,21 @@ def _render(
     return images.permute(0, 2, 3, 1), fragments
 
 
+def _subsample(point_cloud: torch.Tensor, max_points: int) -> torch.Tensor:
+    """
+    Subsamplea aleatoriamente la nube a max_points puntos.
+    Seed fija para reproducibilidad.
+    """
+    if len(point_cloud) <= max_points:
+        return point_cloud
+
+    np.random.seed(0)
+    indices = torch.from_numpy(
+        np.random.choice(len(point_cloud), max_points, replace=False)
+    )
+    return point_cloud[indices]
+
+
 def render_point_cloud(
     point_cloud: torch.Tensor,  # (N, 3)
     R: torch.Tensor,  # (V, 3, 3)
@@ -116,11 +133,16 @@ def render_point_cloud(
         bin_size=0,
     )
     rendered_images, fragments = _render(
-        pcd_stacked,
-        PointsRasterizer(cameras=cameras, raster_settings=raster_settings),
-        NormWeightedCompositor(background_color=(1.0, 1.0, 1.0)),
+        pcd_stacked,  # Pointclouds
+        PointsRasterizer(
+            cameras=cameras,
+            raster_settings=raster_settings,
+        ),  # Rasterized
+        NormWeightedCompositor(background_color=(1.0, 1.0, 1.0)),  # Compositor
     )
-
+    rendering_logger.debug(
+        f"Rendered | images={rendered_images.shape} fragments.idx={fragments.idx.shape}"
+    )
     # corregir indices globales → locales en fragments.idx
     # pytorch3d concatena las nubes en batch, por lo que los indices
     # de la vista i apuntan a i*N + punto_local, hay que restar i*N
@@ -135,5 +157,7 @@ def render_point_cloud(
         rendered_images[..., :3], rotation_indices
     )
     mappings = _rotate_and_interleave_mappings(fragments.idx[..., 0], rotation_indices)
-
+    rendering_logger.info(
+        f"Done | rendered_images={rendered_images.shape} mappings={mappings.shape}"
+    )
     return rendered_images, mappings

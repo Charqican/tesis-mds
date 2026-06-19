@@ -1,5 +1,5 @@
-from src.feature_extractor.config import FeatureConfig
-
+from feature_extractor.config import FeatureConfig
+from logger import backprojection_logger
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -65,6 +65,9 @@ def _interpolate_feature_map(
             mode="bicubic",
             align_corners=False,
         )
+    backprojection_logger.debug(
+        f"Interpolated feature map | input={features.shape} output={interpolated.shape}"
+    )
     return interpolated.permute(1, 2, 3, 0).squeeze(0)  # (H, W, emb_dim)
 
 
@@ -91,6 +94,10 @@ def _interpolate_occluded_points(
     # marcar vecinos sin features como NaN para excluirlos del promedio
     neighbor_features[torch.all(neighbor_features == 0, dim=-1)] = float("nan")
     features[missing] = neighbor_features.nanmean(dim=1)
+
+    backprojection_logger.debug(
+        f"Interpolated occluded points | missing={len(missing)}/{len(point_cloud)}"
+    )
 
     return torch.nan_to_num(features)
 
@@ -147,5 +154,5 @@ def aggregate_features(
 
     # interpolar puntos ocluidos con kNN
     features_acc = _interpolate_occluded_points(point_cloud[:, :3], features_acc)
-
+    backprojection_logger.info(f"Done | features={features_acc.shape}")
     return features_acc
