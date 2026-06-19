@@ -1,7 +1,8 @@
 import torch
 import numpy as np
 from pytorch3d.renderer import look_at_view_transform
-from src.feature_extractor.config import FeatureConfig
+from feature_extractor.config import FeatureConfig
+from logger import sampling_logger
 
 
 def _get_camera_distance(point_cloud: torch.Tensor, fov: float) -> float:
@@ -14,7 +15,10 @@ def _get_camera_distance(point_cloud: torch.Tensor, fov: float) -> float:
     fov_min = min(fov_h, fov_v)
 
     distance = radius / np.tan(fov_min / 2)
-    return distance * 1.2
+    sampling_logger.debug(
+        f"Camera distance | radius {radius:.3f} distance {distance:.3f}"
+    )
+    return distance * 1.2  # 1.2 for a margin
 
 
 def _sample_fibonacci_points(radius: float, n_point: int) -> np.ndarray:
@@ -58,6 +62,9 @@ def sample_fibonacci_views(
 
     R, T = look_at_view_transform(
         eye=torch.tensor(views, dtype=torch.float32), device=device
+    )
+    sampling_logger.info(
+        f"Fibonacci views sampled | views: {config.num_views} R: {R.shape} T: {T.shape}"
     )
 
     return R, T
