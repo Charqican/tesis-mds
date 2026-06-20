@@ -3,12 +3,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from data_loaders.config import DataLoaderConfig
-# from logger import ingestion_logger
+from logger import ingestion_logger
 
 
 def find_parquet_files(raw_dir: Path) -> list[Path]:
     files = sorted(raw_dir.glob("*.parquet"))  # buscar arhivos .parquet
-    # ingestion_logger.info(f"Found {len(files)} parquet files in {raw_dir}")
+    ingestion_logger.info(f"Found {len(files)} parquet files in {raw_dir}")
     return files
 
 
@@ -16,16 +16,16 @@ def load_parquet(path: Path) -> tuple[np.ndarray, np.ndarray]:
     """
     assume the following data model for parquet files:
 
-            [label]         [input]
+            [label]         [inputs]
     [index]   str    np.array[list[...]]
 
     with each input encoding a 8196 point cloud in an array of lists with 3 floats.
     """
     df = pd.read_parquet(path)
-    pc = np.stack([np.stack(row) for row in df["input"]]).astype(np.float32)
-    labels = df["label"].to_numpy()
+    pc = np.stack([np.stack(row) for row in df["inputs"]]).astype(np.float32)
+    labels = df["labels"].to_numpy()
 
-    # ingestion_logger.debug(f"Loaded {path} | point_clouds={point_clouds.shape}")
+    ingestion_logger.debug(f"Loaded {path} | point_clouds={pc.shape}")
     return pc, labels
 
 
@@ -46,7 +46,9 @@ def _save_separate(
         )  # (batch_size, P, 3)
 
     np.save(out / "labels.npy", labels)
-    # ingestion_logger.info(f"Saved {num_batches} batches of {batch_size} objects to {output_dir}")
+    ingestion_logger.info(
+        f"Saved {num_batches} batches of {batch_size} objects to {output_dir}"
+    )
 
 
 def _save_stacked(
@@ -57,7 +59,9 @@ def _save_stacked(
 
     np.save(out / "point_clouds.npy", point_clouds)
     np.save(out / "labels.npy", labels)
-    # ingestion_logger.info(f"Saved {len(point_clouds)} objects (stacked mode) to {output_dir}")
+    ingestion_logger.info(
+        f"Saved {len(point_clouds)} objects (stacked mode) to {output_dir}"
+    )
 
 
 def ingest(config: DataLoaderConfig = DataLoaderConfig()) -> None:
@@ -75,3 +79,7 @@ def ingest(config: DataLoaderConfig = DataLoaderConfig()) -> None:
         raise ValueError(
             f"mode debe ser 'separate' o 'stacked', recibido: {config.mode}"
         )
+
+
+if __name__ == "__main__":
+    ingest()
