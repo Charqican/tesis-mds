@@ -5,17 +5,26 @@ requires-python = "==3.12.*"
 dependencies = [
     "loguru>=0.7.3",
     "rich>=15.0.0",
-    "torch",
-    "torchvision",
+    "torch==2.8.0+cu129",
+    "torchvision==0.23.0+cu129",
     "pytorch3d==0.7.8+pt2.8.0cu129",
     "point-cloud-utils",
     "torch-geometric",
-    "torch-cluster",
     "trimesh",
     "pyvista",
     "scikit-learn",
+    "dotenv>=0.9.9",
+    "pyg-lib",
 ]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/data_loaders",
+    "src/feature_extractor",
+]
 [dependency-groups]
 experiments = [
     "fastparquet>=2026.5.0",
@@ -41,13 +50,11 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
-
 pytorch3d = [
     { url = "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.8/pytorch3d-0.7.8%2Bpt2.8.0cu129-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
     { url = "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.8/pytorch3d-0.7.8%2Bpt2.8.0cu129-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux'" }
 ]
-
-torch-cluster = [
-    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu129/torch_cluster-1.6.3%2Bpt28cu129-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
-    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu129/torch_cluster-1.6.3%2Bpt28cu129-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux'" }
+pyg-lib = [
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu129/pyg_lib-0.6.0%2Bpt28cu129-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", marker = "sys_platform == 'linux'" },
+    { url = "https://data.pyg.org/whl/torch-2.8.0%2Bcu129/pyg_lib-0.6.0%2Bpt28cu129-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" }
 ]
