@@ -37,8 +37,7 @@ def extract_features(
         pipeline_logger.info(f"Subsampled to {len(point_cloud)} points")
 
     # obtain pixel-point mappings for every rendered view
-    rendered_images, mappings = point_cloud, R, T, config
-
+    rendered_images, mappings = render_point_cloud(point_cloud, R, T, config)
     # DINOv2 features
     with torch.no_grad():
         model_outputs = model(rendered_images)

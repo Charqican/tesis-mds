@@ -40,7 +40,9 @@ def _rotate_and_interleave_images(
     selected = [all_rotations[i] for i in rotation_indices]
     rotations = torch.stack(selected, dim=0)  # (R, V, H, W, 3)
     rotations = rotations.permute(1, 0, 2, 3, 4)  # (V, R, H, W, 3)
-    return rotations.reshape(len(rotation_indices) * images.shape[0], *images.shape[1:])
+    return rotations.reshape(
+        len(rotation_indices) * images.shape[0], *images.shape[1:]
+    ).contiguous()
 
 
 def _rotate_and_interleave_mappings(
