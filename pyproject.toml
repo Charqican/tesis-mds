@@ -40,6 +40,9 @@ test = [
 ]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+filterwarnings = [
+    "ignore:No mtl file provided:UserWarning",
+]
 [tool.uv]
 index-strategy = "unsafe-best-match"
 environments = ["sys_platform == 'linux'", "sys_platform == 'win32'"]
