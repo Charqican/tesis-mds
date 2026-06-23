@@ -1,3 +1,4 @@
+# Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
 import torch
 import numpy as np
 from pytorch3d.renderer import look_at_view_transform

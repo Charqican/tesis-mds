@@ -1,4 +1,5 @@
 """
+Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
 Model wrappers for feature extraction from large pre-trained vision models.
 """
 

@@ -1,3 +1,5 @@
+# Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
+
 import torch
 import torch.nn
 import numpy as np

@@ -1,3 +1,5 @@
+# Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
+
 from feature_extractor.config import FeatureConfig
 from logger import backprojection_logger
 import torch

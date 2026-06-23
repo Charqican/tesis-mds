@@ -1,3 +1,4 @@
+# Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
 from feature_extractor.backprojection import aggregate_features
 from feature_extractor.config import FeatureConfig
 from feature_extractor.rendering import render_point_cloud

@@ -9,18 +9,8 @@ from pytorch3d.ops import sample_points_from_meshes
 import torch
 
 from data_loaders.config import DataLoaderConfig
+from data_loaders.utils import find_files
 from logger import ingestion_logger
-
-
-def _find_files(
-    file_dir: Path, file_extension: str, n: int | None = None, sort: bool = False
-) -> list[Path]:
-    if sort:
-        files = sorted(file_dir.glob(f"*.{file_extension}"))  # buscar arhivos .parquet
-    else:
-        files = list(file_dir.glob(f"*.{file_extension}"))
-    ingestion_logger.info("Found {len(files)} parquet files in {obj_dir}")
-    return files[:n]
 
 
 def load_parquet(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -76,7 +66,10 @@ def _save_stacked(
 
 
 def ingest_parquet(config: DataLoaderConfig = DataLoaderConfig()) -> None:
-    parquet_files = _find_files(Path(config.raw_dir), ".parquet", sort=True)
+    parquet_files = find_files(Path(config.raw_dir), ".parquet", sort=True)
+    ingestion_logger.info(
+        f"Found {len(parquet_files)} parquet files in {config.raw_dir}"
+    )
 
     results = [load_parquet(p) for p in parquet_files]
     point_clouds = np.concatenate([r[0] for r in results], axis=0)
