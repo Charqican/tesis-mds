@@ -3,7 +3,7 @@ Repositorio de completación de nubes de puntos con features retroproyectadas de
 
 ## About the code and documentation
 ...
-## Instalation 
+## InstalLation 
 ### System requirements
 - macOS not supported by torch wheels used, more information at the end
 - CUDA xxxx
