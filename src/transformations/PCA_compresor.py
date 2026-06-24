@@ -3,30 +3,22 @@ from logger import transformations_logger
 
 
 def compress_features_pca(
-    features: torch.Tensor,  # (P, D) features de UN objeto
+    features: torch.Tensor,
     target_dim: int,
+    standardize: bool = True,
 ) -> tuple[torch.Tensor, float]:
-    """
-    Args:
-        features: (P, D) features por punto de un objeto
-        target_dim: dimension de salida deseada
+    if standardize:
+        features = (features - features.mean(dim=0)) / features.std(dim=0)
 
-    Returns:
-        compressed: (P, target_dim) features proyectadas
-        explained_variance_ratio: fraccion promedio de varianza explicada
-    """
+    P, D = features.shape
+    q = min(P, D)  # rango completo real
 
-    U, S, V = torch.pca_lowrank(features, q=target_dim, center=True)
+    U, S, V = torch.pca_lowrank(features, q=q, center=True)
 
-    compressed = features @ V[:, :target_dim]  # (P, target_dim)
+    compressed = features @ V[:, :target_dim]
 
     total_variance = (S**2).sum()
     explained_variance = (S[:target_dim] ** 2).sum() / total_variance
-
-    transformations_logger.debug(
-        f"PCA | target_dim={target_dim} "
-        f"explained_variance={explained_variance.item():.4f}"
-    )
 
     return compressed, explained_variance.item()
 
