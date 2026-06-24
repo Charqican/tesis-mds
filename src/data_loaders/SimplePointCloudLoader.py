@@ -13,16 +13,17 @@ class PointCloudLoader:
     Carga lazy de point clouds desde una carpeta con un .npy por objeto.
     No carga nada en memoria hasta que se itera.
 
-    Modos de uso:
-        for name, pc in loader:                  # un objeto a la vez, (P, 3)
-        for names, batch in loader.batches(16):   # de a 16, (16, P, 3)
+    Args:
+        config: A DataLoaderConfig object
+        n : the total number of files to load. if nothing is passed load every file in config path
+        sort: sort files before serving.
     """
 
     def __init__(
         self,
         config: DataLoaderConfig,
         n: int | None = None,
-        sort: bool = True,
+        sort: bool = False,
     ):
         self.config = config
         processed_dir = Path(config.processed_dir)
