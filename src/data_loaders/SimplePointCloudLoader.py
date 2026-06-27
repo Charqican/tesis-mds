@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ProjPaths import ProjPath
 from data_loaders.config import DataLoaderConfig
 from data_loaders.utils import find_files
 from logger import dataload_logger
@@ -17,6 +18,7 @@ class PointCloudLoader:
         config: A DataLoaderConfig object
         n : the total number of files to load. if nothing is passed load every file in config path
         sort: sort files before serving.
+        input_path: Donde se espera encontrar los archivos en formato .npy. Se asume que cada .npy es una nube de puntos
     """
 
     def __init__(
@@ -24,12 +26,13 @@ class PointCloudLoader:
         config: DataLoaderConfig,
         n: int | None = None,
         sort: bool = False,
+        input_path: str | Path | None = None,
     ):
+        self.input_path = Path(input_path) if input_path else Path(ProjPath.pc_dataset)
         self.config = config
-        processed_dir = Path(config.processed_dir)
-        self.files = find_files(processed_dir, "npy", n=n, sort=sort)
+        self.files = find_files(self.input_path, "npy", n=n, sort=sort)
         dataload_logger.info(
-            f"PointCloudLoader: found {len(self.files)} objects in {processed_dir}"
+            f"PointCloudLoader: found {len(self.files)} objects in {self.input_path}"
         )
 
     def __len__(self) -> int:
