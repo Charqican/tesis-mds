@@ -23,6 +23,7 @@ def _():
     from data_loaders.config import DataLoaderConfig
     from transformations.PCA_compresor import compress_features_pca
     from model_wrappers import DINOWrapper
+    from ProjPaths import ProjPath
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler
     from dotenv import load_dotenv
@@ -39,8 +40,9 @@ def _():
     import json
     import sys
     import gc
+
     logger.remove()
-    logger.add(sys.stderr, level="WARNING") # Just show errors :).
+    logger.add(sys.stderr, level="WARNING")  # Just show errors :).
     return (
         DINOWrapper,
         DataLoaderConfig,
@@ -48,16 +50,15 @@ def _():
         PCA,
         Path,
         PointCloudLoader,
+        ProjPath,
         StandardScaler,
         aggregate_features,
         compress_features_pca,
         extract_features,
         gc,
         json,
-        load_dotenv,
         mo,
         np,
-        os,
         pd,
         px,
         render_point_cloud,
@@ -76,12 +77,12 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(Path, load_dotenv, os):
-    # Load .env file with the paths used in this notebook.
-    load_dotenv()
-    data_gt_path = os.environ["DATA_SYM_PLANE_PROCESSED"]
-    features_gt_path = Path(os.environ["FEATURES_SYM"])
-    features_gt_pca_path = Path(os.environ["FEATURES_SYM_PCA"])
+def _(ProjPath):
+    # We use ProjPath as a path resolver. Changes to any path are advised to be made by modifying an .env file in the root of the local repository. See .env-example.
+    paths = ProjPath()
+    data_gt_path = paths.gt_plane_symm
+    features_gt_path = paths.get_path_feature("plane_symm") #creates a new directoy for this experiments features
+    features_gt_pca_path = paths.get_path_feature("plane_symm_pca")
     return data_gt_path, features_gt_path, features_gt_pca_path
 
 
@@ -95,8 +96,8 @@ def _(
     torch,
 ):
     # Initialization of classes.
-    dataloader_settings=DataLoaderConfig(processed_dir=data_gt_path)
-    feature_settings=FeatureConfig(batch_size=1)
+    dataloader_settings = DataLoaderConfig(processed_dir=data_gt_path)
+    feature_settings = FeatureConfig(batch_size=1)
     dataloader = PointCloudLoader(config=dataloader_settings)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DINOWrapper(device)
@@ -135,7 +136,7 @@ def _(
     pd,
     torch,
 ):
-    def extract_features_pca_p(p : int, model = model, device = device): 
+    def extract_features_pca_p(p: int, model=model, device=device):
         explained_variance = {}
         features_gt_pca_path.mkdir(parents=True, exist_ok=True)
         with mo.status.progress_bar(
@@ -147,34 +148,26 @@ def _(
                 # Load or extract features from the objec
                 features_path = features_gt_path / f"{name}.npy"
                 if features_path.is_file():
-                    features : torch.Tensor = torch.from_numpy(
-                        np.load(features_path)
-                    )
-                    bar.update(
-                    subtitle=f"Cache for {name}, loading..."
-                    )
+                    features: torch.Tensor = torch.from_numpy(np.load(features_path))
+                    bar.update(subtitle=f"Cache for {name}, loading...")
 
-                else: 
+                else:
                     bar.update(
-                    subtitle=f"No cached features for {name}, extracting & saving..."
+                        subtitle=f"No cached features for {name}, extracting & saving..."
                     )
-                    features : torch.Tensor = extract_features(
+                    features: torch.Tensor = extract_features(
                         pc, model, feature_settings
                     )
-                    np.save(
-                        features_path, features.cpu().numpy()
-                    )
+                    np.save(features_path, features.cpu().numpy())
                 features_pca_p_path = features_gt_pca_path / f"{name}_{p}.npy"
-                features_pca_p, explained_var = compress_features_pca(
-                    features, p
-                )
+                features_pca_p, explained_var = compress_features_pca(features, p)
                 explained_variance[name] = explained_var
                 np.save(features_pca_p_path, features_pca_p.cpu().numpy())
                 del pc
                 del features
                 del features_pca_p
-                cache_flush+=1
-                if cache_flush%32 == 0:
+                cache_flush += 1
+                if cache_flush % 32 == 0:
                     torch.cuda.empty_cache()
                     gc.collect()
 
@@ -182,24 +175,26 @@ def _(
             json.dump(explained_variance, f)
         torch.cuda.empty_cache()
 
-    # Wrapper function to iterate over a list of expected dimensions 
+    # Wrapper function to iterate over a list of expected dimensions
     def run_pca_compression(ps: list[int], model=model, device=device) -> None:
         for p in ps:
             extract_features_pca_p(p, model=model, device=device)
 
-
-    # Create a Pandas DataFrame using all the available .json files. 
-    def build_explained_variance_dataset(ps: list[int], features_gt_pca_path: Path) -> pd.DataFrame:
+    # Create a Pandas DataFrame using all the available .json files.
+    def build_explained_variance_dataset(
+        ps: list[int], features_gt_pca_path: Path
+    ) -> pd.DataFrame:
         explained_variances = []
         for p in ps:
             f = features_gt_pca_path / f"exp_var_{p}.json"
             data = json.loads(f.read_text())  # {hash: var, ...}
 
             for name, var in data.items():
-                explained_variances.append({"name": name, "p": p, "explained_variance": var})
+                explained_variances.append(
+                    {"name": name, "p": p, "explained_variance": var}
+                )
 
         return pd.DataFrame(explained_variances)
-
 
     return build_explained_variance_dataset, run_pca_compression
 
@@ -241,17 +236,19 @@ def _(df, ps, sns):
         font_scale=1.1,
     )
 
-    plt.rcParams.update({
-        "figure.figsize": (8, 5),
-        "figure.dpi": 120,
-        "axes.titlesize": 14,
-        "axes.titleweight": "bold",
-        "axes.labelsize": 12,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "legend.frameon": False,
-        "savefig.bbox": "tight",
-    })
+    plt.rcParams.update(
+        {
+            "figure.figsize": (8, 5),
+            "figure.dpi": 120,
+            "axes.titlesize": 14,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 12,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "legend.frameon": False,
+            "savefig.bbox": "tight",
+        }
+    )
     p_values = [2, 4, 8, 16, 32, 64, 128, 256]
     sns.lineplot(data=df, x="p", y="explained_variance", marker="o", errorbar="sd")
     plt.xscale("log")
@@ -266,9 +263,10 @@ def _(df, ps, sns):
 @app.cell(disabled=True, hide_code=True)
 def _(PCA, StandardScaler, features_gt_path, np):
 
-
     # features reales de un objeto
-    features_real = np.load(features_gt_path / "1298634053ad50d36d07c55cf995503e.npy")  # (P, 384)
+    features_real = np.load(
+        features_gt_path / "1298634053ad50d36d07c55cf995503e.npy"
+    )  # (P, 384)
     P, D = features_real.shape
 
     # baseline: ruido gaussiano puro, mismas dimensiones
@@ -296,13 +294,12 @@ def _(Path, df, json, pd, plt, ps, sns):
         gt = json.loads(gt_path.read_text())  # {hash: [[n,p], ...], ...}
 
         records = [
-            {"hash": hash_, "n_planes": len(planes)}
-            for hash_, planes in gt.items()
+            {"hash": hash_, "n_planes": len(planes)} for hash_, planes in gt.items()
         ]
 
         return pd.DataFrame(records)
 
-    def show_pca_statistics_by_planes(n_planes : int, gt_df):
+    def show_pca_statistics_by_planes(n_planes: int, gt_df):
         hashes = gt_df[gt_df["n_planes"] == n_planes]["hash"]
         p_values = [2, 4, 8, 16, 32, 64, 128, 256]
         sns.lineplot(
@@ -310,7 +307,7 @@ def _(Path, df, json, pd, plt, ps, sns):
             x="p",
             y="explained_variance",
             marker="o",
-            errorbar="sd"
+            errorbar="sd",
         )
         plt.xscale("log")
         plt.xticks(ps, labels=[str(p) for p in ps])
@@ -318,7 +315,6 @@ def _(Path, df, json, pd, plt, ps, sns):
         plt.xlabel("number of principal components")
         plt.ylabel("Explained Var")
         plt.show()
-    
 
     return build_n_planes_dataset, show_pca_statistics_by_planes
 
@@ -338,12 +334,13 @@ def _(df, gt_df, plt, ps, sns):
     sns.lineplot(
         ax=ax,
         data=df_filtered,
-        x="p", y="explained_variance",
+        x="p",
+        y="explained_variance",
         hue="n_planes",
         style="n_planes",
         markers=True,
         palette="deep",
-        #errorbar=None
+        # errorbar=None
     )
     ax.set_xscale("log", base=2)
     ax.set_xticks(ps)
@@ -352,7 +349,6 @@ def _(df, gt_df, plt, ps, sns):
     ax.set_xlabel("Number of principal components")
     ax.set_ylabel("Explained variance")
     plt.show()
-
     return
 
 
@@ -363,9 +359,7 @@ def _(
     data_gt_path,
     show_pca_statistics_by_planes,
 ):
-    gt_df = build_n_planes_dataset(
-            Path(data_gt_path) / "ground_truth.json"
-        )
+    gt_df = build_n_planes_dataset(Path(data_gt_path) / "ground_truth.json")
     show_pca_statistics_by_planes(1, gt_df)
     show_pca_statistics_by_planes(2, gt_df)
     show_pca_statistics_by_planes(3, gt_df)
@@ -410,11 +404,10 @@ def _(
         )
         return point_cloud[indices]
 
-
-    def example_pipeline_features(obj_name, pc_path : Path, max_point: int = 1000) -> tuple[torch.Tensor, torch.Tensor]:
-        pc = torch.from_numpy(
-        np.load( Path(data_gt_path) / obj_name)
-        )
+    def example_pipeline_features(
+        obj_name, pc_path: Path, max_point: int = 1000
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        pc = torch.from_numpy(np.load(Path(data_gt_path) / obj_name))
         pc_subsampled = _subsample(pc, max_point)
         print(pc_subsampled.shape)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -431,59 +424,53 @@ def _(
         )
         return features, pc_subsampled
 
-
-    def plot_obj_with_PCA(obj_name, p : int = 32, show_comp : int = 1):
+    def plot_obj_with_PCA(obj_name, p: int = 32, show_comp: int = 1):
         # feature extractor
         features, pc = example_pipeline_features(
-            obj_name,
-            Path(data_gt_path) / obj_name,
-            max_point=4000
+            obj_name, Path(data_gt_path) / obj_name, max_point=4000
         )
         features = features.cpu()
         pc = pc.cpu()
-        # PCA 
+        # PCA
         scaler = StandardScaler()
         features_scaled = scaler.fit_transform(features)
         pca = PCA(n_components=p)
-        pca_features = pca.fit_transform(features_scaled) # (P, n_comp)
+        pca_features = pca.fit_transform(features_scaled)  # (P, n_comp)
         var_expl = pca.explained_variance_ratio_
         print(f"n comp: {p} explained_var: {var_expl[:8]}")
         print(f"explained: {sum(var_expl)}")
         df_dict = {
-                'x': pc[:, 0],
-                'y': pc[:, 1],
-                'z': pc[:, 2],
+            "x": pc[:, 0],
+            "y": pc[:, 1],
+            "z": pc[:, 2],
         }
         for i in range(p):
-            df_dict |= {f"PC{i+1}": pca_features[:, i]}
+            df_dict |= {f"PC{i + 1}": pca_features[:, i]}
         df = pd.DataFrame(df_dict)
 
         # plotly
         show_comp_ = f"PC{show_comp}"
         fig = px.scatter_3d(
-            df, 
-            x='x', y='y', z='z',
+            df,
+            x="x",
+            y="y",
+            z="z",
             color=show_comp_,
-            color_continuous_scale='Viridis', opacity=0.8,
-            title=f'Heat Map: Component {show_comp_}<br>'
-                  f'(Explained var: {sum(var_expl):.4f})'
-                  f'(Component var: {var_expl[show_comp-1]:.4f})'
-        
+            color_continuous_scale="Viridis",
+            opacity=0.8,
+            title=f"Heat Map: Component {show_comp_}<br>"
+            f"(Explained var: {sum(var_expl):.4f})"
+            f"(Component var: {var_expl[show_comp - 1]:.4f})",
         )
 
         fig.update_traces(marker=dict(size=2))
         fig.update_layout(
             scene=dict(
-                xaxis_title='X',
-                yaxis_title='Y',
-                zaxis_title='Z',
-                aspectmode='data'
+                xaxis_title="X", yaxis_title="Y", zaxis_title="Z", aspectmode="data"
             ),
-            margin=dict(l=0, r=0, b=0, t=50) # 
+            margin=dict(l=0, r=0, b=0, t=50),  #
         )
         return fig
-        
-    
 
     return (plot_obj_with_PCA,)
 
@@ -511,7 +498,6 @@ def _(mo):
 @app.cell
 def _(ex1_1):
     ex1_1.show()
-
     return
 
 
