@@ -8,11 +8,13 @@ from data_loaders.config import DataLoaderConfig
 from logger import dataload_logger
 
 
+# deprecated, remove
 def load_labels(processed_dir: str) -> torch.Tensor:
     labels = np.load(Path(processed_dir) / "labels.npy")
     return torch.from_numpy(labels)
 
 
+# TODO: deprecated, remove
 def load_batch_point_clouds(
     k_batches: int | None = None,
     config: DataLoaderConfig = DataLoaderConfig(),
@@ -49,6 +51,7 @@ def load_batch_point_clouds(
     return point_clouds_tensor
 
 
+# TODO: deprecated, remove
 def load_batch_point_clouds_gt(
     k_batches: int | None = None,
     config: DataLoaderConfig = DataLoaderConfig(),
