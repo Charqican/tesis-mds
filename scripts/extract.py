@@ -1,7 +1,7 @@
 from data_loaders.SimplePointCloudLoader import PointCloudLoader
 from data_loaders.config import DataLoaderConfig
 from feature_extractor.config import FeatureConfig
-from feature_extractor.feature_pipeline import extract_features
+from pipelines.backprojected_features import extract_features
 from pytorch3d.structures import Pointclouds
 import torch
 import torchvision

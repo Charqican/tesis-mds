@@ -14,7 +14,7 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _():
-    from feature_extractor.feature_pipeline import extract_features
+    from pipelines.backprojected_features import extract_features
     from feature_extractor.config import FeatureConfig
     from feature_extractor.sampling import sample_fibonacci_views
     from feature_extractor.rendering import render_point_cloud
@@ -81,7 +81,9 @@ def _(ProjPath):
     # We use ProjPath as a path resolver. Changes to any path are advised to be made by modifying an .env file in the root of the local repository. See .env-example.
     paths = ProjPath()
     data_gt_path = paths.gt_plane_symm
-    features_gt_path = paths.get_path_feature("plane_symm") #creates a new directoy for this experiments features
+    features_gt_path = paths.get_path_feature(
+        "plane_symm"
+    )  # creates a new directoy for this experiments features
     features_gt_pca_path = paths.get_path_feature("plane_symm_pca")
     return data_gt_path, features_gt_path, features_gt_pca_path
 
