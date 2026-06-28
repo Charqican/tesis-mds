@@ -9,3 +9,4 @@ import os
 class DataLoaderConfig:
     mode: str = "separate"
     batch_size: int = 16
+    mesh_subsampling: int = 8192  # matches ShapeNet dataset
