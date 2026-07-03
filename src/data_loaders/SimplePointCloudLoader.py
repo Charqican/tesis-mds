@@ -13,6 +13,7 @@ class PointCloudLoader:
     """
     Carga lazy de point clouds desde una carpeta con un .npy por objeto.
     No carga nada en memoria hasta que se itera.
+    implementa utilid para cargar features
 
     Args:
         config: A DataLoaderConfig object
@@ -24,15 +25,17 @@ class PointCloudLoader:
     def __init__(
         self,
         config: DataLoaderConfig,
+        input_path: str | Path,
         n: int | None = None,
         sort: bool = False,
-        input_path: str | Path | None = None,
     ):
-        self.input_path = Path(input_path) if input_path else Path(ProjPath.pc_dataset)
+        self.input_path = Path(input_path)
         self.config = config
         self.files = find_files(self.input_path, "npy", n=n, sort=sort)
+        # remove faulty file
+        # self.files.remove(self.input_path / "895563d304772f50ad5067eac75a07f7.npy")
         dataload_logger.info(
-            f"PointCloudLoader: found {len(self.files)} objects in {self.input_path}"
+            f"PointCloudLoader: found {len(self.files)} objects in {self.input_path} \n"
         )
 
     def __len__(self) -> int:
