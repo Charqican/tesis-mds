@@ -15,13 +15,14 @@ def _(mo):
 @app.cell(hide_code=True)
 def _():
     from pipelines.backprojected_features import extract_features
+    from pipelines.eval_invariance import eval_invariance_features
     from feature_extractor.config import FeatureConfig
     from feature_extractor.sampling import sample_fibonacci_views
     from feature_extractor.rendering import render_point_cloud
     from feature_extractor.backprojection import aggregate_features
     from data_loaders.SimplePointCloudLoader import PointCloudLoader
     from data_loaders.config import DataLoaderConfig
-    from transformations.PCA_compresor import compress_features_pca
+    from transformations.PCA_compresor import compress_features_pca, compress_batch_pca
     from model_wrappers import DINOWrapper
     from ProjPaths import ProjPath
     from sklearn.decomposition import PCA
@@ -53,7 +54,9 @@ def _():
         ProjPath,
         StandardScaler,
         aggregate_features,
+        compress_batch_pca,
         compress_features_pca,
+        eval_invariance_features,
         extract_features,
         gc,
         json,
@@ -82,10 +85,17 @@ def _(ProjPath):
     paths = ProjPath()
     data_gt_path = paths.gt_plane_symm
     features_gt_path = paths.get_path_feature(
-        "plane_symm"
+        "features_sym_ori"
     )  # creates a new directoy for this experiments features
-    features_gt_pca_path = paths.get_path_feature("plane_symm_pca")
-    return data_gt_path, features_gt_path, features_gt_pca_path
+    features_gt_pca_path = paths.get_path_feature("features_sym_pca")
+    invariance_dataset_path = paths.invariance
+    return (
+        data_gt_path,
+        features_gt_path,
+        features_gt_pca_path,
+        invariance_dataset_path,
+        paths,
+    )
 
 
 @app.cell(hide_code=True)
@@ -98,14 +108,14 @@ def _(
     torch,
 ):
     # Initialization of classes.
-    dataloader_settings = DataLoaderConfig(processed_dir=data_gt_path)
-    feature_settings = FeatureConfig(batch_size=1)
-    dataloader = PointCloudLoader(config=dataloader_settings)
+    dataloader_settings = DataLoaderConfig(batch_size=16)
+    feature_settings = FeatureConfig(batch_size=1, max_points=8192)
+    dataloader = PointCloudLoader(config=dataloader_settings, input_path=data_gt_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DINOWrapper(device)
 
     feature_settings.print_summary()
-    return dataloader, device, feature_settings, model
+    return dataloader, dataloader_settings, device, feature_settings, model
 
 
 @app.cell(hide_code=True)
@@ -123,6 +133,8 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(
     Path,
+    PointCloudLoader,
+    compress_batch_pca,
     compress_features_pca,
     dataloader,
     device,
@@ -138,6 +150,47 @@ def _(
     pd,
     torch,
 ):
+    def extract_features_pca_p_batch(
+        p: int,
+        feature_loader, 
+        device=device,
+    ):
+        explained_variance = {}
+        features_gt_pca_path.mkdir(parents=True, exist_ok=True)
+
+        cache_path = features_gt_pca_path / f"exp_var_{p}.json"
+        if cache_path.exists():
+            return  # ya calculado, no recalcular
+
+        with mo.status.progress_bar(
+            total=len(feature_loader),
+            title=f"Compressing batch of features (p={p})"
+        ) as bar:
+            cache_flush_counter = 0
+            for names, batch_features in feature_loader.batches():
+                batch_features = batch_features.to(device)  # (K, N, D)
+                batch_features_pca, batch_var = compress_batch_pca(
+                    batch_features,
+                    p
+                )
+
+                for i, name in enumerate(names):
+                    out_path = features_gt_pca_path / f"{name}_{p}.npy"
+                    np.save(out_path, batch_features_pca[i].cpu().numpy())  
+                    explained_variance[name] = batch_var[i].item()  
+                    bar.update(subtitle=f"Saved {name} (p={p})")
+                    cache_flush_counter += 1
+
+                del batch_features, batch_features_pca
+                if cache_flush_counter >= 32:
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    cache_flush_counter = 0  
+
+        with open(cache_path, "w") as f:
+            json.dump(explained_variance, f)
+        torch.cuda.empty_cache()
+
     def extract_features_pca_p(p: int, model=model, device=device):
         explained_variance = {}
         features_gt_pca_path.mkdir(parents=True, exist_ok=True)
@@ -182,6 +235,20 @@ def _(
         for p in ps:
             extract_features_pca_p(p, model=model, device=device)
 
+    def run_pca_compression_batches(
+        ps: list[int],
+        feature_loader : PointCloudLoader,
+        model=model,
+        device=device
+    ):
+        for p in ps:
+            extract_features_pca_p_batch(
+                p,
+                feature_loader,
+                device=device
+            )
+
+
     # Create a Pandas DataFrame using all the available .json files.
     def build_explained_variance_dataset(
         ps: list[int], features_gt_pca_path: Path
@@ -198,7 +265,7 @@ def _(
 
         return pd.DataFrame(explained_variances)
 
-    return build_explained_variance_dataset, run_pca_compression
+    return build_explained_variance_dataset, run_pca_compression_batches
 
 
 @app.cell
@@ -211,12 +278,19 @@ def _(mo):
 
 @app.cell
 def _(
+    PointCloudLoader,
     build_explained_variance_dataset,
+    dataloader_settings,
+    features_gt_path,
     features_gt_pca_path,
-    run_pca_compression,
+    run_pca_compression_batches,
 ):
     ps = [2, 4, 8, 16, 32, 64, 128, 256]
-    run_pca_compression(ps)
+    feature_loader = PointCloudLoader(
+        config=dataloader_settings,
+        input_path=features_gt_path
+    )
+    run_pca_compression_batches(ps, feature_loader)
     df = build_explained_variance_dataset(ps, features_gt_pca_path)
     return df, ps
 
@@ -322,8 +396,8 @@ def _(Path, df, json, pd, plt, ps, sns):
 
 
 @app.cell
-def _(gt_df):
-    gt_df["n_planes"].value_counts()
+def _(gt_df, sns):
+    sns.countplot(data=gt_df, x = "n_planes")
     return
 
 
@@ -364,7 +438,7 @@ def _(
     gt_df = build_n_planes_dataset(Path(data_gt_path) / "ground_truth.json")
     show_pca_statistics_by_planes(1, gt_df)
     show_pca_statistics_by_planes(2, gt_df)
-    show_pca_statistics_by_planes(3, gt_df)
+    #show_pca_statistics_by_planes(3, gt_df)
     return (gt_df,)
 
 
@@ -465,7 +539,7 @@ def _(
             f"(Component var: {var_expl[show_comp - 1]:.4f})",
         )
 
-        fig.update_traces(marker=dict(size=2))
+        fig.update_traces(marker=dict(size=2.5))
         fig.update_layout(
             scene=dict(
                 xaxis_title="X", yaxis_title="Y", zaxis_title="Z", aspectmode="data"
@@ -479,10 +553,10 @@ def _(
 
 @app.cell(hide_code=True)
 def _(plot_obj_with_PCA):
-    obj_name = "895563d304772f50ad5067eac75a07f7.npy"
-    ex1_1 = plot_obj_with_PCA(obj_name)
-    ex1_2 = plot_obj_with_PCA(obj_name, show_comp=2)
-    ex1_16 = plot_obj_with_PCA(obj_name, show_comp=16)
+    obj_name = "15cb1696b45ef647dcad484e89744ca.npy"
+    ex1_1 = plot_obj_with_PCA(obj_name, p = 8)
+    ex1_2 = plot_obj_with_PCA(obj_name, p = 8, show_comp=2)
+    ex1_16 = plot_obj_with_PCA(obj_name, p=3, show_comp=3)
     ex1_32 = plot_obj_with_PCA(obj_name, show_comp=32)
     return ex1_1, ex1_16, ex1_2, ex1_32
 
@@ -531,7 +605,7 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(plot_obj_with_PCA):
-    obj_name_3 = "83412e29d5978b101f6dfedaba98d5f983412e29d5978b101f6dfedaba98d5f9.npy"
+    obj_name_3 = "83412e29d5978b101f6dfedaba98d5f9.npy"
     ex3_1 = plot_obj_with_PCA(obj_name_3)
     ex3_2 = plot_obj_with_PCA(obj_name_3, show_comp=2)
     ex3_16 = plot_obj_with_PCA(obj_name_3, show_comp=16)
@@ -560,6 +634,154 @@ def _(ex3_16):
 @app.cell
 def _(ex3_32):
     ex3_32.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Experiment 2: how does symmetry invariance degrade as we decrease p?
+
+    For each PCA dimension p, we compute the mean L1 distance between features
+    of geometrically paired points (reflected across the ground truth symmetry plane).
+    Lower is better — a perfect invariant extractor would score 0.
+    We also include p=original (no PCA) as the baseline.
+    """)
+    return
+
+
+@app.cell
+def _(
+    Path,
+    data_gt_path,
+    eval_invariance_features,
+    feature_settings,
+    features_gt_path,
+    features_gt_pca_path,
+    invariance_dataset_path,
+    json,
+    mo,
+    paths,
+    pd,
+    ps,
+):
+    def run_invariance_eval(ps: list[int], filter_by = None) -> None:
+        # features originales (sin PCA) como baseline
+        original_cache = Path(invariance_dataset_path) / "inv_original.json"
+
+        if not original_cache.exists():
+
+            with mo.status.spinner(
+                title="Computing invariance (original features)"
+            ):
+                df_ori = eval_invariance_features(
+                    config=feature_settings,
+                    point_cloud_path=data_gt_path,
+                    feature_path=features_gt_path,
+                    gt_path=paths.gt_plane_symm_ori,
+                    model=None,
+                    filter_by=None,
+                )
+                result = {
+                    row["name"]: row["invariance"] for _, row in df_ori.iterrows()
+                }
+                original_cache.write_text(json.dumps(result))
+
+        # features PCA por dimension p
+        for p in ps:
+            cache = Path(invariance_dataset_path) / f"inv_{p}.json"
+            if cache.exists():
+                continue
+            with mo.status.spinner(title=f"Computing invariance (p={p})"):
+                df_p = eval_invariance_features(
+                    config=feature_settings,
+                    point_cloud_path=data_gt_path,
+                    feature_path=features_gt_pca_path,
+                    gt_path=paths.gt_plane_symm_ori,
+                    model=None,
+                    filter_by=f"_{p}",
+                )
+                result = {row["name"]: row["invariance"] for _, row in df_p.iterrows()}
+                cache.write_text(json.dumps(result))
+
+    def build_invariance_dataset(
+        ps: list[int], invariance_path: Path
+    ) -> pd.DataFrame:
+        """
+        Lee los .json cacheados y construye un DataFrame con columnas:
+            name, p, invariance
+        Incluye p=original como referencia baseline.
+        """
+        records = []
+
+        # baseline: features originales sin PCA
+        original_cache = invariance_path / "inv_original.json"
+        data = json.loads(original_cache.read_text())
+        for name, inv in data.items():
+            records.append(
+                {"name": name, "p": "original", "p_num": 384, "invariance": inv}
+            )
+
+        # features PCA
+        for p in ps:
+            cache = invariance_path / f"inv_{p}.json"
+            data = json.loads(cache.read_text())
+            for name, inv in data.items():
+                records.append(
+                    {"name": name, "p": str(p), "p_num": p, "invariance": inv}
+                )
+
+        return pd.DataFrame(records)
+
+    run_invariance_eval(ps)
+    df_inv = build_invariance_dataset(ps, Path(invariance_dataset_path))
+    return (df_inv,)
+
+
+@app.cell(hide_code=True)
+def _(df_inv, plt, ps, sns):
+    df_inv["invariance"] = df_inv["invariance"] / df_inv["p_num"] 
+    # orden del eje x: original primero, luego p creciente
+    p_order = ["ori"] + [str(p) for p in sorted(ps)]
+    p_num_order = [384] + sorted(ps)  # para el eje x numerico
+
+    sns.set_theme(
+        style="whitegrid",
+        palette="deep",
+        font="sans-serif",
+        font_scale=1.1,
+    )
+    plt.rcParams.update(
+        {
+            "figure.figsize": (8, 5),
+            "figure.dpi": 120,
+            "axes.titlesize": 14,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 12,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "legend.frameon": False,
+            "savefig.bbox": "tight",
+        }
+    )
+
+    sns.lineplot(
+        data=df_inv,
+        x="p_num",
+        y="invariance",
+        marker="o",
+        errorbar="sd",
+    )
+    plt.xscale("log")
+    plt.xticks(p_num_order, labels=p_order)
+    plt.axvline(
+        x=384, color="gray", linestyle="--", linewidth=0.8, label="original (no PCA)"
+    )
+    plt.legend()
+    plt.title("Mean symmetry invariance vs PCA components")
+    plt.xlabel("Number of principal components")
+    plt.ylabel("L1 invariance distance (lower = better)")
+    plt.show()
     return
 
 
