@@ -3,8 +3,8 @@ from metrics.utils import get_top_L_similar_index
 
 
 def _symm_invariance(
-    points: torch.Tensor,  # (1000, 3) - Nube de puntos submuestreada
-    features: torch.Tensor,  # (1000, D) - Features correspondientes
+    points: torch.Tensor,  # (N, 3) - Nube de puntos submuestreada
+    features: torch.Tensor,  # (N, D) - Features correspondientes
     normal: torch.Tensor,  # (3,) - Normal del plano
     midpoint: torch.Tensor,  # (3,) - Punto medio del plano
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -27,8 +27,8 @@ def _symm_invariance(
 
 
 def compute_symmetry_invariance_pointwise(
-    points: torch.Tensor,  # (1000, 3) - Nube de puntos submuestreada
-    features: torch.Tensor,  # (1000, D) - Features correspondientes
+    points: torch.Tensor,  # (N, 3) - Nube de puntos submuestreada
+    features: torch.Tensor,  # (N, D) - Features correspondientes
     normal: torch.Tensor,  # (3,) - Normal del plano
     midpoint: torch.Tensor,  # (3,) - Punto medio del plano
 ) -> torch.Tensor:
@@ -38,8 +38,8 @@ def compute_symmetry_invariance_pointwise(
 
 
 def compute_symmetry_invariance(
-    points: torch.Tensor,  # (1000, 3) - Nube de puntos submuestreada
-    features: torch.Tensor,  # (1000, D) - Features correspondientes
+    points: torch.Tensor,  # (N, 3) - Nube de puntos submuestreada
+    features: torch.Tensor,  # (N, D) - Features correspondientes
     normal: torch.Tensor,  # (3,) - Normal del plano
     midpoint: torch.Tensor,  # (3,) - Punto medio del plano
 ) -> float:
@@ -48,3 +48,19 @@ def compute_symmetry_invariance(
         points, features, normal, midpoint
     )
     return torch.mean(distances).item()
+
+
+def compute_symmetry_invariance_object(
+    points: torch.Tensor,  # (N, 3)
+    features: torch.Tensor,  # (N, D)
+    planes: list[tuple[torch.Tensor, torch.Tensor]],  # [(normal, midpoint), ...]
+) -> float:
+    """
+    Distancia L1 de invarianza promediada sobre todos los planos
+    de simetria de un objeto.
+    """
+    distances = [
+        compute_symmetry_invariance(points, features, normal, midpoint)
+        for normal, midpoint in planes
+    ]
+    return sum(distances) / len(distances)
