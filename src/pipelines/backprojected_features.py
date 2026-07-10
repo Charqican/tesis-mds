@@ -1,14 +1,20 @@
 # Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
-from feature_extractor.backprojection import aggregate_features
+from feature_extractor.backprojection import aggregate_features, sample_feature_mesh
 from feature_extractor.config import FeatureConfig
 from feature_extractor.rendering import render_point_cloud
-from feature_extractor.sampling import sample_fibonacci_views
+from feature_extractor.sampling import (
+    sample_fibonacci_view_positions,
+    sample_fibonacci_views,
+)
+from feature_extractor.mesh_backprojection import features_backprojection
 from logger import pipeline_logger
+import torch
+from pytorch3d.structures import Meshes
 import numpy as np
 import torch
 
 
-def extract_features(
+def extract_features_pc(
     point_cloud: torch.Tensor,  # (N, 3)
     model: torch.nn.Module,  # DINOv2 wrapper
     config: FeatureConfig = FeatureConfig(),
@@ -63,3 +69,53 @@ def _subsample(point_cloud: torch.Tensor, max_points: int) -> torch.Tensor:
         np.random.choice(len(point_cloud), max_points, replace=False)
     )
     return point_cloud[indices]
+
+
+def extract_features_fm(
+    mesh: Meshes,
+    model: torch.nn.Module,  # DINOv2 wrapper
+    num_samples: int,
+    config: FeatureConfig = FeatureConfig(),
+) -> tuple[
+    torch.Tensor, torch.Tensor
+]:  # points (num_samples, 3), features (num_samples, emb_dim)
+    """
+    Extrae features DINOv2 via Feature-Mesh Sampling (FM).
+
+    Dos etapas:
+      1. RM: features por vertice del mesh original (features_backprojection).
+      2. FM: propagacion de esas features a puntos muestreados sobre las
+         caras del mesh, via interpolacion baricentrica (sample_feature_mesh).
+
+    A diferencia de extract_features (PC), no hay subsampling: FM necesita
+    la topologia completa del mesh para poder samplear e interpolar sobre
+    las caras, asi que no se puede subsamplear vertices como con max_points
+    en el pipeline de nube de puntos.
+
+    Args:
+        mesh: mesh de pytorch3d (un unico objeto)
+        model: modelo DINOv2 que recibe (V, H, W, C) y retorna (V, num_patches, emb_dim)
+        num_samples: numero de puntos FM a muestrear sobre la superficie
+        config: configuracion del pipeline, usa defaults si no se especifica
+
+    Returns:
+        (points, features): puntos FM y sus features, ambos alineados por indice
+    """
+    device = mesh.device
+    model = model.to(device)
+    pipeline_logger.info(
+        f"Starting FM feature extraction | vertices={mesh.verts_packed().shape[0]} device={device}"
+    )
+
+    # Fibonacci sampling de posiciones de camara sobre los vertices del mesh
+    views = sample_fibonacci_view_positions(mesh.verts_packed(), config)
+
+    # RM: features por vertice del mesh original
+    vertex_features = features_backprojection(model, mesh, views, config, device=device)
+    pipeline_logger.info(f"RM done | vertex_features={vertex_features.shape}")
+
+    # FM: propagar via interpolacion baricentrica a puntos muestreados
+    points, features = sample_feature_mesh(mesh, vertex_features, num_samples)
+
+    pipeline_logger.info(f"Done | points={points.shape} features={features.shape}")
+    return points, features
