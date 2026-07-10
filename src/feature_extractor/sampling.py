@@ -53,13 +53,23 @@ def _sample_fibonacci_points(radius: float, n_point: int) -> np.ndarray:
     return np.array(points)
 
 
+def sample_fibonacci_view_positions(
+    point_cloud: torch.Tensor, config: FeatureConfig
+) -> np.ndarray:  # (V, 3) posiciones de camara (eye) en espacio mundo
+    """
+    Retorna las posiciones de camara (eye) del muestreo Fibonacci, antes
+    de convertirlas a (R, T).
+    """
+    radius = _get_camera_distance(point_cloud, config.fov)
+    return _sample_fibonacci_points(radius, config.num_views)
+
+
 def sample_fibonacci_views(
     point_cloud: torch.Tensor, config: FeatureConfig
 ) -> tuple[torch.Tensor, torch.Tensor]:
     device = point_cloud.device
 
-    radius = _get_camera_distance(point_cloud, config.fov)
-    views = _sample_fibonacci_points(radius, config.num_views)
+    views = sample_fibonacci_view_positions(point_cloud, config)
 
     R, T = look_at_view_transform(
         eye=torch.tensor(views, dtype=torch.float32), device=device
