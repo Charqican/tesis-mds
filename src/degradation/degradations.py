@@ -1,6 +1,7 @@
 import torch
 import random
 from typing import Protocol  # Adviced to reduce coupling
+from degradation.partial import separate_point_cloud, sample_random_viewpoint, sample_viewpoint_relative_to_plane(
 
 
 class DegradationStrategy(Protocol):
@@ -27,6 +28,28 @@ class RandomViewpointDegradation:
         center = sample_random_viewpoint(points, radius=self.radius)
         return separate_point_cloud(points, center, self.k)
 
+
+
+class EquatorCurveDegradation:
+    """Barrido de ángulo (posición en el ecuador) con k% de puntos faltantes."""
+ 
+    def __call__(
+        self, points: torch.Tensor, symmetry_plane: torch.Tensor, angle: float, k: float
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        center = sample_equator_point(symmetry_plane, angle)
+        return seprate_point_cloud(points, center, k)
+
+
+class MeridianCurveDegradation:
+    """Barrido de latitud (0=ecuador, ±pi/2=polos) + k%."""
+ 
+    def __call__(
+        self, points: torch.Tensor, symmetry_plane: torch.Tensor, angle: float, k: float
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        center = sample_meridian_point(symmetry_plane, angle)
+        return seprate_point_cloud(points, center, k)
+       
+        
 
 class SymmetryPlaneDegradation:
     """
