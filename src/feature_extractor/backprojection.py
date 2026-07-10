@@ -1,12 +1,14 @@
 # Original code from https://github.com/Spulp/EnhancedBackProjection/tree/main
-
+from typing import cast
 from feature_extractor.config import FeatureConfig
 from logger import backprojection_logger
 import torch
 import numpy as np
 import torch.nn.functional as F
-
 from torch_geometric.nn import knn
+from pytorch3d.structures import Meshes
+from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.renderer import TexturesVertex
 
 
 def _backproject(
@@ -158,3 +160,69 @@ def aggregate_features(
     features_acc = _interpolate_occluded_points(point_cloud[:, :3], features_acc)
     backprojection_logger.info(f"Done | features={features_acc.shape}")
     return features_acc
+
+
+def sample_feature_mesh(
+    mesh: Meshes,
+    vertex_features: torch.Tensor,  # (N, emb_dim) features ya calculadas sobre los vertices del mesh (RM)
+    num_samples: int,
+) -> tuple[
+    torch.Tensor, torch.Tensor
+]:  # points (num_samples, 3), features (num_samples, emb_dim)
+    """
+    Feature-Mesh Sampling (FM). Muestrea puntos uniformemente sobre la
+    superficie del mesh y les asigna features por interpolacion baricentrica
+    de las features ya calculadas en los vertices (RM), sin volver a
+    renderizar ni back-projectar.
+
+    A diferencia de PC (`aggregate_features`, donde cada punto muestreado
+    se back-projecta independientemente vista por vista), FM reutiliza
+    las features de vertice ya computadas y las propaga usando la
+    topologia del mesh: para un punto en una cara con vertices
+    (va, vb, vc) y coordenadas baricentricas (a, b, c), su feature es
+    a*f_va + b*f_vb + c*f_vc.
+
+    Requiere que `vertex_features` haya sido calculado previamente sobre
+    los vertices de este mismo `mesh` (p.ej. llamando a `aggregate_features`
+    con `point_cloud = mesh.verts_packed()` y mappings/model_outputs
+    obtenidos de un render sobre el mesh, no sobre una nube de puntos).
+    Asume un unico objeto (batch size 1), igual que el resto del pipeline
+    por-objeto.
+
+    :param mesh: Meshes de pytorch3d con un unico objeto
+    :param vertex_features: features por vertice, alineadas con
+        `mesh.verts_packed()` (mismo orden, mismo N)
+    :param num_samples: numero de puntos a muestrear sobre la superficie
+
+    :return: (points, features) muestreados sobre la superficie del mesh
+    """
+    num_verts = mesh.verts_packed().shape[0]
+    assert vertex_features.shape[0] == num_verts, (
+        f"vertex_features tiene {vertex_features.shape[0]} filas pero el mesh "
+        f"tiene {num_verts} vertices"
+    )
+
+    device = vertex_features.device
+    mesh = mesh.to(device)
+
+    # las features se cargan como "textura" por vertice para que pytorch3d
+    # las interpole baricentricamente al samplear puntos sobre las caras
+    mesh_with_features = mesh.clone()
+    mesh_with_features.textures = TexturesVertex(
+        verts_features=vertex_features.unsqueeze(0)  # (1, N, emb_dim)
+    )
+
+    # return_textures=True hace que la firma de tipo de sample_points_from_meshes
+    # sea Union; con este flag en runtime siempre retorna (points, textures)
+    result = sample_points_from_meshes(
+        mesh_with_features, num_samples, return_textures=True
+    )
+    points, features = cast(tuple[torch.Tensor, torch.Tensor], result)
+
+    backprojection_logger.info(
+        f"FM sampling done | points={points.shape} features={features.shape}"
+    )
+
+    return points.squeeze(0), features.squeeze(
+        0
+    )  # (num_samples, 3), (num_samples, emb_dim)
