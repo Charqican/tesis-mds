@@ -14,7 +14,7 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _():
-    from pipelines.backprojected_features import extract_features
+    from pipelines.backprojected_features import extract_features_pc
     from pipelines.eval_invariance import eval_invariance_features
     from feature_extractor.config import FeatureConfig
     from feature_extractor.sampling import sample_fibonacci_views
@@ -57,7 +57,7 @@ def _():
         compress_batch_pca,
         compress_features_pca,
         eval_invariance_features,
-        extract_features,
+        extract_features_pc,
         gc,
         json,
         mo,
@@ -138,7 +138,7 @@ def _(
     compress_features_pca,
     dataloader,
     device,
-    extract_features,
+    extract_features_pc,
     feature_settings,
     features_gt_path,
     features_gt_pca_path,
@@ -210,7 +210,7 @@ def _(
                     bar.update(
                         subtitle=f"No cached features for {name}, extracting & saving..."
                     )
-                    features: torch.Tensor = extract_features(
+                    features: torch.Tensor = extract_features_pc(
                         pc, model, feature_settings
                     )
                     np.save(features_path, features.cpu().numpy())
