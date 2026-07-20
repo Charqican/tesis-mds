@@ -8,6 +8,7 @@ from pytorch3d.renderer import (
     MeshRasterizer,
     MeshRendererWithFragments,
     RasterizationSettings,
+    TexturesVertex,
     look_at_view_transform,
 )
 from pytorch3d.structures import Meshes
@@ -209,6 +210,16 @@ def get_feature_for_pixel_location_optimized_2(
     return vertex_features
 
 
+def _ensure_gray_material(mesh: Meshes, color: float = 0.5) -> Meshes:
+    if mesh.textures is not None:
+        return mesh
+
+    mesh.textures = TexturesVertex(
+        verts_features=torch.ones_like(mesh.verts_packed()[None]) * 0.7
+    )
+    return mesh
+
+
 def features_backprojection(
     model: DINOWrapper,
     mesh: Meshes,
@@ -226,6 +237,7 @@ def features_backprojection(
     :return: vertex features, averaged over all views
     """
     mesh = mesh.to(device)
+    mesh = _ensure_gray_material(mesh)
     rotation_indices = rotation_maps.get(config.rot_aug, [0])
 
     R, T = look_at_view_transform(eye=views, device=device)
@@ -250,13 +262,13 @@ def features_backprojection(
     remaining_R, remaining_T = R, T
 
     while len(remaining_views) > 0:
-        batch_views = remaining_views[: config.batch_size]
-        batch_R = remaining_R[: config.batch_size]
-        batch_T = remaining_T[: config.batch_size]
+        batch_views = remaining_views[: config.view_batch_size]
+        batch_R = remaining_R[: config.view_batch_size]
+        batch_T = remaining_T[: config.view_batch_size]
 
-        remaining_views = remaining_views[config.batch_size :]
-        remaining_R = remaining_R[config.batch_size :]
-        remaining_T = remaining_T[config.batch_size :]
+        remaining_views = remaining_views[config.view_batch_size :]
+        remaining_R = remaining_R[config.view_batch_size :]
+        remaining_T = remaining_T[config.view_batch_size :]
 
         okay = False
         while not okay:
@@ -278,7 +290,12 @@ def features_backprojection(
                 pixel_coords_all_points = cameras.transform_points_screen(
                     points, image_size=(config.resolution, config.resolution)
                 ).cpu()
-
+                backprojection_logger.debug(
+                    f"points_shape: {points.shape}, batch_r_shape: {batch_R.shape}, batch_T_shape: {batch_T.shape}"
+                )
+                backprojection_logger.debug(
+                    f"pixel_coords_all_points.shape: {pixel_coords_all_points.shape}"
+                )
                 images = rotate_and_interleave_images(images, rotation_indices)
                 pixel_coords_all_points = rotate_and_interleave_coordinates(
                     pixel_coords_all_points,
