@@ -15,6 +15,7 @@ class FeatureConfig:
     points_per_pixel: int = 10
     max_points: int | None = 1000
     perspective: bool = True
+    view_batch_size: int = 16
 
     # --- stratic pipeline state ---
     using_fibonacci_sampling: bool = True
