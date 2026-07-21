@@ -6,7 +6,7 @@ from feature_extractor.sampling import (
     sample_fibonacci_view_positions,
     sample_fibonacci_views,
 )
-from feature_extractor.mesh_backprojection import features_backprojection
+from feature_extractor.mesh_backprojection import features_backprojection, _normalize_mesh_to_unit_sphere
 from logger import pipeline_logger
 import torch
 from pytorch3d.structures import Meshes
@@ -70,6 +70,12 @@ def _subsample(point_cloud: torch.Tensor, max_points: int) -> torch.Tensor:
     )
     return point_cloud[indices]
 
+def extract_features_fm(
+    mesh: Meshes,
+    model: torch.nn.Module,
+    num_samples: int,
+    config: FeatureConfig = FeatureConfig(),
+) -> tuple[torch.Tensor, torch.Tensor]:
 
 def extract_features_fm(
     mesh: Meshes,
@@ -101,21 +107,24 @@ def extract_features_fm(
     Returns:
         (points, features): puntos FM y sus features, ambos alineados por indice
     """
+
     device = mesh.device
     model = model.to(device)
+    
     pipeline_logger.info(
         f"Starting FM feature extraction | vertices={mesh.verts_packed().shape[0]} device={device}"
     )
+    # NORMALIZAR PRIMERO
+    mesh = _normalize_mesh_to_unit_sphere(mesh)
 
-    # Fibonacci sampling de posiciones de camara sobre los vertices del mesh
     views = sample_fibonacci_view_positions(mesh.verts_packed(), config)
 
-    # RM: features por vertice del mesh original
     vertex_features = features_backprojection(model, mesh, views, config, device=device)
     pipeline_logger.info(f"RM done | vertex_features={vertex_features.shape}")
 
-    # FM: propagar via interpolacion baricentrica a puntos muestreados
     points, features = sample_feature_mesh(mesh, vertex_features, num_samples)
-
     pipeline_logger.info(f"Done | points={points.shape} features={features.shape}")
+
     return points, features
+
+

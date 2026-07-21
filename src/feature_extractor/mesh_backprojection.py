@@ -237,7 +237,6 @@ def features_backprojection(
     :return: vertex features, averaged over all views
     """
     mesh = mesh.to(device)
-    mesh = _normalize_mesh_to_unit_sphere(mesh)
     mesh = _ensure_gray_material(mesh)
     rotation_indices = rotation_maps.get(config.rot_aug, [0])
 
