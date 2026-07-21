@@ -72,6 +72,72 @@ def find_adjacent_faces(faces: torch.Tensor) -> torch.Tensor:  # (F, max_adjacen
     return ret
 
 
+def check_visible_vertices_optimized_debug(
+    pix_to_face: torch.Tensor,
+    mesh: Meshes,
+    adjacent_faces: bool = True,
+) -> torch.Tensor:
+    num_views = pix_to_face.shape[0]
+    faces_packed = mesh.faces_packed()
+    num_faces = len(faces_packed)
+    num_verts = len(mesh.verts_packed())
+
+    backprojection_logger.debug(
+        f"check_visible | views={num_views} faces={num_faces} verts={num_verts} "
+        f"adjacent={adjacent_faces} pix_to_face_shape={tuple(pix_to_face.shape)}"
+    )
+
+    # reshape y máscara válida
+    visible_faces_per_view = pix_to_face.view(num_views, -1) % num_faces
+    valid_mask = visible_faces_per_view >= 0
+    n_valid_per_view = valid_mask.sum(dim=1)
+    backprojection_logger.debug(
+        f"Valid pixels per view: min={n_valid_per_view.min().item()} "
+        f"max={n_valid_per_view.max().item()} "
+        f"mean={n_valid_per_view.float().mean().item():.1f}"
+    )
+
+    visible_faces_per_view = visible_faces_per_view * valid_mask
+
+    if adjacent_faces:
+        adjacent_faces_ = find_adjacent_faces(faces_packed)
+
+        n_adj_per_face = (adjacent_faces_ >= 0).sum(dim=1)
+        backprojection_logger.debug(
+            f"Adjacent faces stats: min={n_adj_per_face.min().item()} "
+            f"max={n_adj_per_face.max().item()} "
+            f"mean={n_adj_per_face.float().mean().item():.2f}"
+        )
+
+        visible_faces_per_view = torch.cat(
+            [
+                visible_faces_per_view,
+                adjacent_faces_[visible_faces_per_view].view(num_views, -1),
+            ],
+            dim=1,
+        )
+
+    visible_vertices = faces_packed[visible_faces_per_view.type(torch.long)].view(
+        num_views, -1
+    )
+
+    visible_vertices_per_view = torch.zeros(
+        num_views, num_verts, dtype=torch.bool, device=mesh.device
+    )
+    visible_vertices_per_view.scatter_(1, visible_vertices, True)
+
+    n_visible_per_view = visible_vertices_per_view.sum(dim=1)
+    n_visible_total = visible_vertices_per_view.any(dim=0).sum()
+    backprojection_logger.debug(
+        f"Visibility result | per_view: min={n_visible_per_view.min().item()} "
+        f"max={n_visible_per_view.max().item()} "
+        f"mean={n_visible_per_view.float().mean().item():.1f} | "
+        f"verts_visible_in_any_view={n_visible_total.item()}/{num_verts}"
+    )
+
+    return visible_vertices_per_view
+
+
 def check_visible_vertices_optimized(
     pix_to_face: torch.Tensor,  # (V, H, W, faces_per_pixel)
     mesh: Meshes,
@@ -304,7 +370,7 @@ def features_backprojection(
                 )
 
                 # (V, N) mascara de visibilidad por vertice y por imagen
-                visible_points = check_visible_vertices_optimized(
+                visible_points = check_visible_vertices_optimized_debug(
                     fragments.pix_to_face, mesh
                 )
                 visible_points = visible_points.repeat_interleave(

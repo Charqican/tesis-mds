@@ -79,6 +79,7 @@ def extract_features_fm(
     model: torch.nn.Module,  # DINOv2 wrapper
     num_samples: int,
     config: FeatureConfig = FeatureConfig(),
+    mesh_name: None | str = None,
 ) -> tuple[
     torch.Tensor, torch.Tensor
 ]:  # points (num_samples, 3), features (num_samples, emb_dim)
@@ -111,6 +112,8 @@ def extract_features_fm(
     pipeline_logger.info(
         f"Starting FM feature extraction | vertices={mesh.verts_packed().shape[0]} device={device}"
     )
+    if mesh_name:
+        pipeline_logger.info(f"Mesh name: {mesh_name}")
     # NORMALIZAR PRIMERO
     mesh = _normalize_mesh_to_unit_sphere(mesh)
 
