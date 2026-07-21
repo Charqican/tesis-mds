@@ -237,6 +237,7 @@ def features_backprojection(
     :return: vertex features, averaged over all views
     """
     mesh = mesh.to(device)
+    mesh = _normalize_mesh_to_unit_sphere(mesh)
     mesh = _ensure_gray_material(mesh)
     rotation_indices = rotation_maps.get(config.rot_aug, [0])
 
@@ -337,10 +338,8 @@ def features_backprojection(
                 okay = True
 
             except AssertionError as e:
-                # retry con camara/vistas ligeramente escaladas; heuristica
-                # portada del repo original para evitar asserts intermitentes
-                # del renderer cuando la vista queda muy cerca de la superficie
-                backprojection_logger.debug(f"Retry tras AssertionError: {e}")
+                # retry con camara/vistas ligeramente escaladas
+                backprojection_logger.warning(f"Retry tras AssertionError: {e}")
                 batch_T = batch_T * 1.1
                 batch_views = batch_views * 1.1
 
@@ -355,3 +354,12 @@ def features_backprojection(
 
     backprojection_logger.info(f"RM done | features={ret_array.shape}")
     return ret_array
+
+
+def _normalize_mesh_to_unit_sphere(mesh: Meshes) -> Meshes:
+    verts = mesh.verts_packed()
+    center = verts.mean(dim=0)
+    mesh = mesh.offset_verts_(-center)
+    max_dist = mesh.verts_packed().norm(dim=1).max()
+    mesh.scale_verts_(1.0 / max_dist.item())
+    return mesh
