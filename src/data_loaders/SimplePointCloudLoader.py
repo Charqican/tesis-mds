@@ -8,7 +8,6 @@ from pytorch3d.io import IO
 from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures import Meshes, join_meshes_as_batch
 
-from ProjPaths import ProjPath
 from data_loaders.config import DataLoaderConfig
 from data_loaders.utils import find_files
 from logger import dataload_logger
