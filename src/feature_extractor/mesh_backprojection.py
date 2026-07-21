@@ -345,7 +345,7 @@ def features_backprojection(
 
     if torch.any(overall_visibility == 0):
         backprojection_logger.warning(
-            f"{torch.sum(overall_visibility == 0)} vertices no son visibles en ninguna vista"
+            f"{torch.sum(overall_visibility == 0)} vertices no son visibles en ninguna vista."
         )
 
     ret_array[point_values_counts > 0] /= point_values_counts[point_values_counts > 0][
@@ -362,4 +362,5 @@ def _normalize_mesh_to_unit_sphere(mesh: Meshes) -> Meshes:
     mesh = mesh.offset_verts_(-center)
     max_dist = mesh.verts_packed().norm(dim=1).max()
     mesh.scale_verts_(1.0 / max_dist.item())
+    backprojection_logger.debug("Normalizando mesh...")
     return mesh
