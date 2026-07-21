@@ -24,6 +24,7 @@ build-backend = "hatchling.build"
 packages = [
     "src/data_loaders",
     "src/feature_extractor",
+    "src/pipelines"
 ]
 [dependency-groups]
 experiments = [
