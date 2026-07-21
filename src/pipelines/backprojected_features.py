@@ -6,7 +6,10 @@ from feature_extractor.sampling import (
     sample_fibonacci_view_positions,
     sample_fibonacci_views,
 )
-from feature_extractor.mesh_backprojection import features_backprojection, _normalize_mesh_to_unit_sphere
+from feature_extractor.mesh_backprojection import (
+    features_backprojection,
+    _normalize_mesh_to_unit_sphere,
+)
 from logger import pipeline_logger
 import torch
 from pytorch3d.structures import Meshes
@@ -70,12 +73,6 @@ def _subsample(point_cloud: torch.Tensor, max_points: int) -> torch.Tensor:
     )
     return point_cloud[indices]
 
-def extract_features_fm(
-    mesh: Meshes,
-    model: torch.nn.Module,
-    num_samples: int,
-    config: FeatureConfig = FeatureConfig(),
-) -> tuple[torch.Tensor, torch.Tensor]:
 
 def extract_features_fm(
     mesh: Meshes,
@@ -110,7 +107,7 @@ def extract_features_fm(
 
     device = mesh.device
     model = model.to(device)
-    
+
     pipeline_logger.info(
         f"Starting FM feature extraction | vertices={mesh.verts_packed().shape[0]} device={device}"
     )
@@ -126,5 +123,3 @@ def extract_features_fm(
     pipeline_logger.info(f"Done | points={points.shape} features={features.shape}")
 
     return points, features
-
-
