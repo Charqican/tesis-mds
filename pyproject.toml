@@ -24,7 +24,8 @@ build-backend = "hatchling.build"
 packages = [
     "src/data_loaders",
     "src/feature_extractor",
-    "src/pipelines"
+    "src/pipelines",
+    "src/pose6d"
 ]
 [dependency-groups]
 experiments = [
