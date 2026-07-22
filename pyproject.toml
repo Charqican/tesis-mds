@@ -37,6 +37,14 @@ experiments = [
     "seaborn>=0.13.2",
     "sns>=0.1",
 ]
+6dpose = [
+    "numpy>=2.0.0",
+    "scipy>=1.11.0",
+    "opencv-python-headless>=4.8.0",
+    "trimesh>=4.0.0",
+    "open3d==0.19.0",
+    "huggingface-hub>=0.20.0",
+]
 test = [
     "pytest>=9.1.0",
 ]
