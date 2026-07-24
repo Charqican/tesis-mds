@@ -182,19 +182,12 @@ def sample_feature_mesh(
     (va, vb, vc) y coordenadas baricentricas (a, b, c), su feature es
     a*f_va + b*f_vb + c*f_vc.
 
-    Requiere que `vertex_features` haya sido calculado previamente sobre
-    los vertices de este mismo `mesh` (p.ej. llamando a `aggregate_features`
-    con `point_cloud = mesh.verts_packed()` y mappings/model_outputs
-    obtenidos de un render sobre el mesh, no sobre una nube de puntos).
-    Asume un unico objeto (batch size 1), igual que el resto del pipeline
-    por-objeto.
-
-    :param mesh: Meshes de pytorch3d con un unico objeto
-    :param vertex_features: features por vertice, alineadas con
+    param mesh: Meshes de pytorch3d con un unico objeto
+    param vertex_features: features por vertice, alineadas con
         `mesh.verts_packed()` (mismo orden, mismo N)
-    :param num_samples: numero de puntos a muestrear sobre la superficie
+    param num_samples: numero de puntos a muestrear sobre la superficie
 
-    :return: (points, features) muestreados sobre la superficie del mesh
+    return: (points, features) muestreados sobre la superficie del mesh
     """
     num_verts = mesh.verts_packed().shape[0]
     assert vertex_features.shape[0] == num_verts, (

@@ -114,14 +114,17 @@ def extract_features_fm(
     )
     if mesh_name:
         pipeline_logger.info(f"Mesh name: {mesh_name}")
-    # NORMALIZAR PRIMERO
+    # TODO: NORMALIZATION SHOULD BE SET TROUGH CONFIGURATION
     mesh = _normalize_mesh_to_unit_sphere(mesh)
 
+    # obtain camera views using fibonacci sampling
     views = sample_fibonacci_view_positions(mesh.verts_packed(), config)
 
+    # obtain vertex features from FM sampling
     vertex_features = features_backprojection(model, mesh, views, config, device=device)
     pipeline_logger.info(f"RM done | vertex_features={vertex_features.shape}")
 
+    # Use interpolation to obtain points independet from mesh topology. Use baricenter coordinates to average vertex features for pointclouds in its triangle.
     points, features = sample_feature_mesh(mesh, vertex_features, num_samples)
     pipeline_logger.info(f"Done | points={points.shape} features={features.shape}")
 
