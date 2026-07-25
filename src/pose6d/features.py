@@ -27,7 +27,7 @@ class MeshFeatureExtractor:
         self.mesh_path = Path(mesh_path)
         self.num_samples = num_samples
 
-        self._mesh = IO().load_mesh(str(self.mesh_path))
+        self._mesh: Meshes = IO().load_mesh(str(self.mesh_path))
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._mesh = self._mesh.to(self._device)
 
@@ -40,7 +40,7 @@ class MeshFeatureExtractor:
         if self.mode == "distance":
             if plane is None:
                 raise ValueError("plane required for distance mode")
-            return _extract_distance(plane)
+            return _distance_field(plane)
 
         elif self.mode == "backprojection":
             return extract_features_fm(self._mesh, model, 10000, extract_settings, "")
@@ -49,9 +49,27 @@ class MeshFeatureExtractor:
             raise ValueError(f"Unknown mode: {self.mode}")
 
 
-def extract_distance(
+def _sample_mesh_points(mesh: Meshes, num_samples: int) -> torch.Tensor:
+    """Samplea puntos uniformemente sobre la superficie del mesh."""
+    points = sample_points_from_meshes(mesh, num_samples)  # (1, N, 3)
+    return points.squeeze(0)  # (N, 3)
+
+
+def _compute_distance_field(
+    points: torch.Tensor,
     plane: SymmetryData,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    points = sample_points_from_meshes(self._mesh, self.num_samples)
-    field = compute_distance_field(points, plane)
+) -> torch.Tensor:
+    """Calcula distancia con signo al plano de simetría."""
+    device = points.device
+    normal = plane.normal.to(device)
+    point = plane.plane_point.to(device)
+
+    diff = points - point  # (N, 3)
+    distances = diff @ normal  # (N,)
+    return distances.unsqueeze(-1)  # (N, 1)
+
+
+def _distance_field(self, plane: SymmetryData) -> tuple[torch.Tensor, torch.Tensor]:
+    points = _sample_mesh_points(self._mesh, self.num_samples)
+    field = _compute_distance_field(points, plane)
     return points, field
