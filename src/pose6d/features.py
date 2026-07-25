@@ -3,6 +3,7 @@ from pose6d.data_loader import SymmetryData
 from model_wrappers import DINOWrapper
 from feature_extractor.config import FeatureConfig
 
+from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures import Meshes
 from pytorch3d.io import IO
 from typing import Literal
@@ -14,6 +15,7 @@ import torch
 # exposes .extract() as its main method
 
 
+# TODO : implement distance_feature_field &
 class MeshFeatureExtractor:
     def __init__(
         self,
@@ -41,15 +43,15 @@ class MeshFeatureExtractor:
             return _extract_distance(plane)
 
         elif self.mode == "backprojection":
-            return extract_features_fm(self._mesh, model, extract_settings)
+            return extract_features_fm(self._mesh, model, 10000, extract_settings, "")
 
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
 
-def _extract_distance(
+def extract_distance(
     plane: SymmetryData,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    points = _sample_mesh_points(self._mesh, self.num_samples)
-    field = _compute_distance_field(points, plane)
+    points = sample_points_from_meshes(self._mesh, self.num_samples)
+    field = compute_distance_field(points, plane)
     return points, field
