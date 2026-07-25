@@ -2,14 +2,17 @@ from dataclasses import dataclass
 from .config import LMOConfig
 
 import numpy as np
-from pathlib import Path
-from typing import Iterator
-
-import json
+import torch
 import cv2
 
+from pathlib import Path
+from typing import Iterator
+import json
 
-# firma para instancias de objetos y su data asociada. (also LSP friendly :))
+
+# firma para instancias de objetos y su data asociada. (LSP friendly :))
+# Interfaces que el resto del modulo utiliza para calcular las escenas.
+# En caso de cambio de schema se recomienda mantener estas dataclass y extender un dataloader similar a LMOLoader
 @dataclass(frozen=True)
 class InstanceData:
     obj_id: int
@@ -26,6 +29,12 @@ class SceneData:
     K: np.ndarray
     depth_scale: float
     instances: list[InstanceData]
+
+
+@dataclass(frozen=True)
+class SymmetryData:
+    normal: torch.Tensor
+    plane_point: torch.Tensor
 
 
 class LMOLoader:
@@ -74,6 +83,38 @@ class LMOLoader:
                 )
             )
         return parsed
+
+    def load_symmetry_plane(self, obj_id: int) -> SymmetryData | None:
+
+        with open(self.paths.models_info) as f:
+            info = json.load(f)
+
+        obj_data = info.get(str(obj_id))
+        if not obj_data:
+            return None
+
+        symmetries = obj_data.get("symmetry_discrete")
+        if not symmetries:
+            return None
+
+        return self._parse_symmetry_matrix(
+            symmetries[0]
+        )  # harcoded to 1 plane of symmetry
+
+    def _parse_symmetry_matrix(self, symm_matrix: list[float]) -> SymmetryData:
+        M = np.array(symm_matrix, dtype=np.float64).reshape(4, 4)
+        R = M[:3, :3]
+        t = M[:3, 3]
+
+        eigvals, eigvecs = np.linalg.eig(R)
+        normal = eigvecs[:, np.argmin(eigvals)].real
+        normal = normal / np.linalg.norm(normal)
+        point = t / 2.0
+
+        return SymmetryData(
+            torch.tensor(normal, dtype=torch.float32),
+            torch.tensor(point, dtype=torch.float32),
+        )
 
     # --- carga de imágenes ---
 
