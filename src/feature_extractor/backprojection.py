@@ -198,18 +198,19 @@ def sample_feature_mesh(
     device = vertex_features.device
     mesh = mesh.to(device)
 
-    # las features se cargan como "textura" por vertice para que pytorch3d
-    # las interpole baricentricamente al samplear puntos sobre las caras
+    # los features en cada vertice que conforma el triangulo se carga como textura:
+    # f1 f2 f3 -> texture.
+    # dado que las texturas se interpolan con coordenadas baricentricas, se tiene el comportamimento deseado gratis.
     mesh_with_features = mesh.clone()
     mesh_with_features.textures = TexturesVertex(
         verts_features=vertex_features.unsqueeze(0)  # (1, N, emb_dim)
     )
 
-    # return_textures=True hace que la firma de tipo de sample_points_from_meshes
-    # sea Union; con este flag en runtime siempre retorna (points, textures)
+    # con los features como texturas, basta samplear uninforme y con return_textures = true para obtener la interpolacion de los features como subproducto.
     result = sample_points_from_meshes(
         mesh_with_features, num_samples, return_textures=True
     )
+    # unicamente para evitar warnings y errores del LSP se hace un cast al tipo esperado
     points, features = cast(tuple[torch.Tensor, torch.Tensor], result)
 
     backprojection_logger.info(

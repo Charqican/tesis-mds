@@ -74,6 +74,7 @@ def _subsample(point_cloud: torch.Tensor, max_points: int) -> torch.Tensor:
     return point_cloud[indices]
 
 
+# TODO: check if it should pass num_samples or config.max_points
 def extract_features_fm(
     mesh: Meshes,
     model: torch.nn.Module,  # DINOv2 wrapper
