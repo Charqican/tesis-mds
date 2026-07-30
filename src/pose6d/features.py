@@ -15,7 +15,6 @@ import torch
 # exposes .extract() as its main method
 
 
-# TODO : implement distance_feature_field &
 class MeshFeatureExtractor:
     def __init__(
         self,
@@ -40,15 +39,23 @@ class MeshFeatureExtractor:
         if self.mode == "distance":
             if plane is None:
                 raise ValueError("plane required for distance mode")
-            return _distance_field(plane)
+            return self._distance_field(plane)
 
         elif self.mode == "backprojection":
-            return extract_features_fm(self._mesh, model, 10000, extract_settings, "")
+            return extract_features_fm(
+                self._mesh, model, self.num_samples, extract_settings, ""
+            )
 
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
+    def _distance_field(self, plane: SymmetryData) -> tuple[torch.Tensor, torch.Tensor]:
+        points = _sample_mesh_points(self._mesh, self.num_samples)
+        field = _compute_distance_field(points, plane)
+        return points, field
 
+
+# Fix: put this inside the class as a "private" method
 def _sample_mesh_points(mesh: Meshes, num_samples: int) -> torch.Tensor:
     """Samplea puntos uniformemente sobre la superficie del mesh."""
     points = sample_points_from_meshes(mesh, num_samples)  # (1, N, 3)
@@ -67,9 +74,3 @@ def _compute_distance_field(
     diff = points - point  # (N, 3)
     distances = diff @ normal  # (N,)
     return distances.unsqueeze(-1)  # (N, 1)
-
-
-def _distance_field(self, plane: SymmetryData) -> tuple[torch.Tensor, torch.Tensor]:
-    points = _sample_mesh_points(self._mesh, self.num_samples)
-    field = _compute_distance_field(points, plane)
-    return points, field
