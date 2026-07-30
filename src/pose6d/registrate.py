@@ -1,26 +1,39 @@
 from dataclasses import dataclass
 
+import torch
 import numpy as np
 import trimesh  # may change to torch
 
-from .config import LMOConfig
-from .data_loader import LMOLoader, InstanceData
-from .geometry_utils import backproject_depth, transform_points, isolate_object_points
+from pose6d.config import LMOConfig
+from pose6d.data_loader import LMOLoader, InstanceData, SymmetryData
+from pose6d.features import MeshFeatureExtractor
+from pose6d.geometry_utils import (
+    backproject_depth,
+    transform_points,
+    isolate_object_points,
+    knn_propagate,
+)
+from model_wrappers import DINOWrapper
+from logger import registrate_logger
 
 
 # dataclass que contiene scene cloud, object cloud y posed mesh.
 # Se favorece sobre diccionarios para un workflow idieomatico + mejor LSP compat
+# Ademas se expone como interfaz para otros modulos
 @dataclass(frozen=True)
-class RegistrationResult:
+class RegistratedData:
     scene_pts: np.ndarray  # (N, 3) nube completa de la escena
-    object_pts: (
+    masked_points: (
         np.ndarray | None
     )  # (M, 3) puntos del objeto visibles, o None sin máscara
     posed_mesh_pts: np.ndarray  # (S, 3) muestras de superficie del mesh posado
     pose_R: np.ndarray  # (3, 3)
     pose_t: np.ndarray  # (3,)
     obj_id: int
-    visib_fract: float | None
+    visib_fract: float | None  # fraccion visible del objeto
+    propagated_features: (
+        np.ndarray | None
+    )  # features propagadas desde el mesh a puntos visibles
 
 
 def load_mesh_samples(
@@ -50,13 +63,16 @@ def load_mesh_samples(
     return tri[idx, 0] + u * a[idx] + w * b[idx]
 
 
+# WARGNING: object path resolver is currently hardcoded. It should be change given a different naming convention
+# TODO: Handle errors
 def register_instance(
     loader: LMOLoader,
     config: LMOConfig,
     scene_id: int,
     img_id: int,
     inst_idx: int,
-) -> RegistrationResult:
+    feature_mode: str = "distance",
+) -> RegistratedData:
     """
     Registra una instancia de objeto en una imagen del dataset.
 
@@ -64,34 +80,81 @@ def register_instance(
     2. Construye nube de escena (submuestreada por load_mesh_samples)
     3. Aísla puntos del objeto con máscara visible
     4. Muestrea mesh y aplica pose GT
+    5. Obtiene features del mesh GT
+    6. Porpaga features del mesh a pose GT
+
     """
     # Metadatos
+    registrate_logger.info("Registrating Metadata")
     K, depth_scale = loader.load_camera(scene_id, img_id)
     instances = loader.load_instances(scene_id, img_id)
     instance: InstanceData = instances[inst_idx]
 
     # Nube de escena
+    registrate_logger.info("Loading scene")
     depth = loader.load_depth(scene_id, img_id)
     scene_pts = backproject_depth(depth, K, depth_scale, stride=config.depth_stride)
 
-    # Puntos del objeto (con máscara visible)
+    # Puntos del objeto (con mascara visible)
+    registrate_logger.info("Building ocludded pointcloud")
     mask = loader.load_mask_visib(scene_id, img_id, inst_idx)
-    object_pts = None
+    masked_points = None
     if mask is not None:
-        object_pts = isolate_object_points(depth, mask, K, depth_scale)
+        # Obtener puntos visibles
+        masked_points = isolate_object_points(depth, mask, K, depth_scale)
 
     # Mesh posado
+    registrate_logger.info("Sampling Mesh")
     mesh_samples = load_mesh_samples(
         config.paths.models_dir, instance.obj_id, config.mesh_samples
     )
     posed_mesh_pts = transform_points(mesh_samples, instance.R, instance.t)
 
-    return RegistrationResult(
+    # Features extraidos de mesh
+    registrate_logger.info("Extracting & propagating features")
+    propagated_features = None
+
+    if masked_points is not None and len(masked_points) > 0:
+        mesh_path = config.paths.models_dir / f"obj_{instance.obj_id:06d}.ply"
+        extractor = MeshFeatureExtractor(mesh_path, feature_mode, config.mesh_samples)
+
+        # Extract Symmetry data to calculate distnace fields
+        if feature_mode == "distance":  # get symmdata
+            symmetry_data = loader.load_symmetry_plane(instance.obj_id)
+            if symmetry_data is not None:
+                mesh_points, mesh_features = extractor.extract(plane=symmetry_data)
+            else:
+                ...  # handle error: symmetry data not found
+                raise ValueError("No symetry planes metadata found")
+
+        # for now, using backprojected features as fallback
+        else:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = DINOWrapper(device)
+            mesh_points, mesh_features = extractor.extract(model=model)
+
+    else:
+        raise ValueError("No object points found")  # handle error: no object points
+
+    # Propagar features al gt del escaner
+    features = (
+        mesh_features.cpu().numpy() if torch.is_tensor(mesh_features) else mesh_features
+    )
+    mesh_points = (
+        mesh_points.cpu().numpy() if torch.is_tensor(mesh_points) else mesh_points
+    )
+
+    propagated_features = knn_propagate(
+        mesh_points, features, masked_points, instance.R, instance.t
+    )
+
+    return RegistratedData(
         scene_pts=scene_pts,
-        object_pts=object_pts,
+        masked_points=masked_points,
         posed_mesh_pts=posed_mesh_pts,
         pose_R=instance.R,
         pose_t=instance.t,
         obj_id=instance.obj_id,
         visib_fract=instance.visible_fract,
+        propagated_features=propagated_features,
     )
