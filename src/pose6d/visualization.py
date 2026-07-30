@@ -3,8 +3,8 @@ from pathlib import Path
 
 import open3d as o3d
 import numpy as np
-
-from .registrate import RegistrationResult
+import plotly.graph_objects as go
+from .registrate import RegistratedData
 
 
 # ----------------------------------------------------------------------------- PLY writer
@@ -38,7 +38,7 @@ def write_ply(
 
 
 def save_registration_plys(
-    result: RegistrationResult,
+    result: RegistratedData,
     out_dir: str | Path,
     prefix: str = "",
 ) -> dict[str, Path]:
@@ -65,14 +65,14 @@ def save_registration_plys(
     paths["posed_mesh"] = p
 
     # Object points (if available)
-    if result.object_pts is not None and len(result.object_pts) > 0:
-        green = np.tile([40, 200, 40], (len(result.object_pts), 1))
+    if result.masked_points is not None and len(result.masked_points) > 0:
+        green = np.tile([40, 200, 40], (len(result.masked_points), 1))
         p = out_dir / f"{prefix}object_scene_pts.ply"
-        write_ply(p, result.object_pts, green)
+        write_ply(p, result.masked_points, green)
         paths["object_pts"] = p
 
         # Combined
-        combo_pts = [result.scene_pts, result.posed_mesh_pts, result.object_pts]
+        combo_pts = [result.scene_pts, result.posed_mesh_pts, result.masked_points]
         combo_col = [grey, red, green]
     else:
         combo_pts = [result.scene_pts, result.posed_mesh_pts]
@@ -88,7 +88,7 @@ def save_registration_plys(
 # ----------------------------------------------------------------------------- Open3D viewer
 
 
-def visualize_open3d(result: RegistrationResult, point_size: float = 2.0) -> None:
+def visualize_open3d(result: RegistratedData, point_size: float = 2.0) -> None:
     """Visualización interactiva con Open3D (ventana OpenGL)."""
 
     def make_pc(pts, color):
@@ -102,8 +102,8 @@ def visualize_open3d(result: RegistrationResult, point_size: float = 2.0) -> Non
         make_pc(result.posed_mesh_pts, [0.85, 0.15, 0.15]),
     ]
 
-    if result.object_pts is not None and len(result.object_pts) > 0:
-        geoms.append(make_pc(result.object_pts, [0.15, 0.8, 0.15]))
+    if result.masked_points is not None and len(result.masked_points) > 0:
+        geoms.append(make_pc(result.masked_points, [0.15, 0.8, 0.15]))
 
     axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=50.0)
     o3d.visualization.draw_geometries(geoms + [axis])
@@ -112,9 +112,8 @@ def visualize_open3d(result: RegistrationResult, point_size: float = 2.0) -> Non
 # ----------------------------------------------------------------------------- Plotly viewer
 
 
-def visualize_plotly(result: RegistrationResult, title: str = "Registration") -> None:
-    """Visualización en navegador con Plotly (funciona en cualquier lado)."""
-    import plotly.graph_objects as go
+def visualize_plotly(result: RegistratedData, title: str = "Registration") -> None:
+    """Visualización en navegador con Plotly"""
 
     fig = go.Figure()
 
@@ -142,15 +141,31 @@ def visualize_plotly(result: RegistrationResult, title: str = "Registration") ->
         )
     )
 
-    # Object points
-    if result.object_pts is not None and len(result.object_pts) > 0:
+    # Object points con mapa de calor de features
+    if result.masked_points is not None and len(result.masked_points) > 0:
+        marker = dict(size=2, color="green", opacity=0.8)
+
+        # Si hay features propagadas, usar primera dimensión como heatmap
+        if (
+            result.propagated_features is not None
+            and len(result.propagated_features) > 0
+        ):
+            values = result.propagated_features[:, 0]  # (N,) primera dimensión
+            marker = dict(
+                size=2,
+                color=values,
+                colorscale="Viridis",
+                colorbar=dict(title="Feature[0]"),
+                opacity=0.9,
+            )
+
         fig.add_trace(
             go.Scatter3d(
-                x=result.object_pts[:, 0],
-                y=result.object_pts[:, 1],
-                z=result.object_pts[:, 2],
+                x=result.masked_points[:, 0],
+                y=result.masked_points[:, 1],
+                z=result.masked_points[:, 2],
                 mode="markers",
-                marker=dict(size=2, color="green", opacity=0.8),
+                marker=marker,
                 name="Object visible pts",
             )
         )
@@ -167,7 +182,7 @@ def visualize_plotly(result: RegistrationResult, title: str = "Registration") ->
 
 
 def visualize(
-    result: RegistrationResult,
+    result: RegistratedData,
     method: str = "auto",
     out_dir: str | Path | None = None,
     title: str = "Registration",

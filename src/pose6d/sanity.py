@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .geometry_utils import nn_residuals
-from .registrate import RegistrationResult
+from .registrate import RegistratedData
 
 
 @dataclass(frozen=True)
@@ -38,18 +38,18 @@ class SanityMetrics:
         return "\n".join(lines)
 
 
-def compute_sanity_metrics(result: RegistrationResult) -> SanityMetrics:
+def compute_sanity_metrics(result: RegistratedData) -> SanityMetrics:
     """Calcula métricas de calidad del registro."""
 
     # Referencia para métrica secundaria: object_pts si existe, si no scene_pts completa
-    ref = result.object_pts if result.object_pts is not None else result.scene_pts
+    ref = result.masked_points if result.masked_points is not None else result.scene_pts
 
     # Métrica primaria: escena -> mesh (solo si tenemos puntos del objeto)
     fwd_median = fwd_mean = fwd_p90 = fwd_max = 0.0
     fwd_n = 0
 
-    if result.object_pts is not None and len(result.object_pts) > 0:
-        res_fwd = nn_residuals(result.object_pts, result.posed_mesh_pts)
+    if result.masked_points is not None and len(result.masked_points) > 0:
+        res_fwd = nn_residuals(result.masked_points, result.posed_mesh_pts)
         fwd_median = float(np.median(res_fwd))
         fwd_mean = float(res_fwd.mean())
         fwd_p90 = float(np.percentile(res_fwd, 90))
