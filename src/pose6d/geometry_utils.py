@@ -52,3 +52,19 @@ def isolate_object_points(
     d_obj = depth.copy()
     d_obj[~mask] = 0
     return backproject_depth(d_obj, K, depth_scale, stride=1)
+
+
+def knn_propagate(
+    model_points: np.ndarray,
+    point_features: np.ndarray,
+    gt_points: np.ndarray,
+    R: np.ndarray,
+    t: np.ndarray,
+) -> np.ndarray:
+    model_points_cam = transform_points(model_points, R, t)
+    tree = KDTree(model_points_cam)
+    # ids : array of indexes corresponding with closest model point
+    _, ids = tree.query(gt_points, k=1)
+    # reorders point_features to correctly assign each feature to each gt point
+    propagated_features = point_features[ids]
+    return propagated_features
