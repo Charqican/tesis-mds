@@ -34,7 +34,9 @@ class MeshFeatureExtractor:
         self,
         plane: SymmetryData | None = None,
         model: DINOWrapper | None = None,
-        extract_settings: FeatureConfig | None = None,
+        extract_settings: FeatureConfig | None = FeatureConfig(
+            batch_size=1, max_points=10000
+        ),
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.mode == "distance":
             if plane is None:
