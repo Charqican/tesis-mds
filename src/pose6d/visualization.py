@@ -1,10 +1,12 @@
 from dataclasses import dataclass
+import dataclasses
 from pathlib import Path
 
 import open3d as o3d
 import numpy as np
 import plotly.graph_objects as go
 from .registrate import RegistratedData
+from sklearn.decomposition import PCA
 
 
 # ----------------------------------------------------------------------------- PLY writer
@@ -109,9 +111,20 @@ def visualize_open3d(result: RegistratedData, point_size: float = 2.0) -> None:
     o3d.visualization.draw_geometries(geoms + [axis])
 
 
+# PCa Helper
+def _reduce_features_pca(features, n_components: int = 16):
+    """PCA a n_components si features tiene mas de 1 dimension. Si no, la retorna sin cambios."""
+    if features is None or features.ndim <= 1 or features.shape[1] <= 1:
+        return features
+
+    n_components = min(n_components, features.shape[1])
+    return PCA(n_components=n_components).fit_transform(features)
+
+
 # ----------------------------------------------------------------------------- Plotly viewer
 
 
+# WARNING: harcodeando feat[0] para casos de features con dim > 1.
 def visualize_plotly(result: RegistratedData, title: str = "Registration") -> None:
     """Visualización en navegador con Plotly"""
 
@@ -181,6 +194,7 @@ def visualize_plotly(result: RegistratedData, title: str = "Registration") -> No
 # ----------------------------------------------------------------------------- Unified entry point
 
 
+# WARNING: usando PCA para features con dim > 1. k = 16.
 def visualize(
     result: RegistratedData,
     method: str = "auto",
@@ -195,6 +209,14 @@ def visualize(
         out_dir: si method="ply", directorio de salida
         title: título para Plotly
     """
+    # if RegistratedData.propagated_features.dim > 1: then use PCA to transform from (N, k) to (N, l), with l = 16.
+    # TODO : Dado que utilizo PCA aqui, se debe hacer un replace de dataclass. Revisar alternativas
+    if result.propagated_features is not None:
+        reduced_features = _reduce_features_pca(
+            result.propagated_features, n_components=16
+        )
+        result = dataclasses.replace(result, propagated_features=reduced_features)
+
     if method == "ply":
         if out_dir is None:
             raise ValueError("out_dir required for method='ply'")
