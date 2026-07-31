@@ -93,7 +93,7 @@ class LMOLoader:
         if not obj_data:
             return None
 
-        symmetries = obj_data.get("symmetry_discrete")
+        symmetries = obj_data.get("symmetries_discrete")
         if not symmetries:
             return None
 
