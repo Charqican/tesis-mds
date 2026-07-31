@@ -62,6 +62,7 @@ def _sample_mesh_points(mesh: Meshes, num_samples: int) -> torch.Tensor:
     return points.squeeze(0)  # (N, 3)
 
 
+# WARNING: Maybe there's overhead in copying to device instead of using CPU
 def _compute_distance_field(
     points: torch.Tensor,
     plane: SymmetryData,
@@ -73,4 +74,4 @@ def _compute_distance_field(
 
     diff = points - point  # (N, 3)
     distances = diff @ normal  # (N,)
-    return distances.unsqueeze(-1)  # (N, 1)
+    return distances.unsqueeze(-1).abs()  # (N, 1)
