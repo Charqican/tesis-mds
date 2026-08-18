@@ -4,6 +4,7 @@ __marimo__/
 *.py[oc]
 build/
 dist/
+doc/Apuntes/
 data
 data/*
 wheels/
@@ -13,3 +14,8 @@ wheels/
 .venv
 .env
 pyrightconfig.json
+
+# Submodules
+external/dgedi_env/
+external/dgedi/checkpoints/
+external/dgedi/.cache/

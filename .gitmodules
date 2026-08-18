@@ -1,0 +1,3 @@
+[submodule "external/dgedi"]
+	path = external/dgedi
+	url = https://github.com/tev-fbk/dGeDi.git
