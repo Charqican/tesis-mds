@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
+import os
 # Self Contained configurations & paths class. 6dpose is a separate problem using dependencies from backprojection.
 # dependencies are managed separatedly by uv as a dependency group.
 
@@ -45,7 +46,6 @@ class LMOPath:
 
     @classmethod
     def from_env(cls, env_var: str = "LMO_ROOT") -> "LMOPath":
-        import os
 
         root = os.environ.get(env_var)
         if root is None:
