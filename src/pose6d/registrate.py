@@ -25,7 +25,7 @@ class RegistratedData:
     scene_pts: np.ndarray  # (N, 3) nube completa de la escena
     masked_points: (
         np.ndarray | None
-    )  # (M, 3) puntos del objeto visibles, o None sin máscara
+    )  # (M, 3) puntos del objeto visibles, o None sin mascara
     posed_mesh_pts: np.ndarray  # (S, 3) muestras de superficie del mesh posado
     pose_R: np.ndarray  # (3, 3)
     pose_t: np.ndarray  # (3,)
@@ -63,7 +63,7 @@ def load_mesh_samples(
     return tri[idx, 0] + u * a[idx] + w * b[idx]
 
 
-# WARGNING: object path resolver is currently hardcoded. It should be change given a different naming convention
+# WARGNING: object path resolver is currently hardcoded. It should change in case of a different naming convention
 # TODO: Handle errors
 def register_instance(
     loader: LMOLoader,

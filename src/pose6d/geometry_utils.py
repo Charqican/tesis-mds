@@ -68,3 +68,20 @@ def knn_propagate(
     # reorders point_features to correctly assign each feature to each gt point
     propagated_features = point_features[ids]
     return propagated_features
+
+
+def propagate_symmetry_to_target(
+    mesh_points: np.ndarray,
+    symmetry_scalar: np.ndarray,
+    target_points: np.ndarray,
+    R: np.ndarray,
+    t: np.ndarray,
+) -> np.ndarray:
+    """Wrapper delgado sobre knn_propagate, para uso en tiempo de dataset-building."""
+    symmetry_scalar = np.asarray(symmetry_scalar).reshape(
+        -1
+    )  # fuerza 1D, sin importar (M,) o (M,1) de entrada
+    propagated = knn_propagate(mesh_points, symmetry_scalar, target_points, R, t)
+    return propagated.reshape(
+        -1
+    )  # por si acaso, aunque con input 1D ya debería salir 1D
