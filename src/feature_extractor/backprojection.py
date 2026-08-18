@@ -210,7 +210,7 @@ def sample_feature_mesh(
     result = sample_points_from_meshes(
         mesh_with_features, num_samples, return_textures=True
     )
-    # unicamente para evitar warnings y errores del LSP se hace un cast al tipo esperado
+    # unicamente para evitar warnings y errores del LSP
     points, features = cast(tuple[torch.Tensor, torch.Tensor], result)
 
     backprojection_logger.info(
