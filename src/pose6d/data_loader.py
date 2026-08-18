@@ -37,6 +37,15 @@ class SymmetryData:
     plane_point: torch.Tensor
 
 
+@dataclass(frozen=True)
+class ModelInfo:
+    obj_id: int
+    diameter: float
+    min_xyz: np.ndarray  # (3,)
+    size_xyz: np.ndarray  # (3,)
+    symmetries_discrete: list[np.ndarray] | None  # cada uno (4,4), o None
+
+
 class LMOLoader:
     """Carga metadatos e imágenes del dataset LM-O (test split)."""
 
@@ -83,6 +92,36 @@ class LMOLoader:
                 )
             )
         return parsed
+
+    def scene_image_ids(self, scene_id: int) -> list[int]:
+        raw = json.loads(self.paths.scene_camera_path(scene_id).read_text())
+        return sorted(int(k) for k in raw.keys())
+
+    def load_models_info(self) -> dict[int, ModelInfo]:
+        raw = json.loads(self.cfg.paths.models_info.read_text())
+        result = {}
+        for obj_id_str, info in raw.items():
+            obj_id = int(obj_id_str)
+            sym = info.get("symmetries_discrete")
+            result[obj_id] = ModelInfo(
+                obj_id=obj_id,
+                diameter=info["diameter"],
+                min_xyz=np.array([info["min_x"], info["min_y"], info["min_z"]]),
+                size_xyz=np.array([info["size_x"], info["size_y"], info["size_z"]]),
+                symmetries_discrete=(
+                    [np.array(m).reshape(4, 4) for m in sym]
+                    if sym is not None
+                    else None
+                ),
+            )
+        return result
+
+    def symmetric_obj_ids(self) -> set[int]:
+        return {
+            obj_id
+            for obj_id, info in self.load_models_info().items()
+            if info.symmetries_discrete is not None
+        }
 
     def load_symmetry_plane(self, obj_id: int) -> SymmetryData | None:
 
