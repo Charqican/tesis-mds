@@ -1,5 +1,7 @@
 from pipelines.backprojected_features import extract_features_fm
 from pose6d.data_loader import SymmetryData
+from pose6d.config import LMOConfig, LMOPath
+from pose6d.data_loader import LMOLoader
 from model_wrappers import DINOWrapper
 from feature_extractor.config import FeatureConfig
 
@@ -9,6 +11,7 @@ from pytorch3d.io import IO
 from typing import Literal
 
 from pathlib import Path
+import numpy as np
 import torch
 
 # class for feature extraction.
@@ -77,3 +80,47 @@ def _compute_distance_field(
     diff = points - point  # (N, 3)
     distances = diff @ normal  # (N,)
     return distances.unsqueeze(-1).abs()  # (N, 1)
+
+
+def compute_canonical_symmetry_field(
+    config: LMOConfig, loader: LMOLoader, obj_id: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Calcula el campo de simetría (distancia con signo al plano) sobre
+    el mesh canónico completo. Propiedad del OBJETO, no de la instancia
+    -- se llama una sola vez por obj_id, se cachea en disco.
+    Devuelve (mesh_points, symmetry_scalar), mismo orden entre ambos.
+    """
+    symmetry_data = loader.load_symmetry_plane(obj_id)
+    if symmetry_data is None:
+        raise ValueError(f"No symmetry plane metadata for obj_id={obj_id}")
+
+    mesh_path = config.paths.models_dir / f"obj_{obj_id:06d}.ply"
+    extractor = MeshFeatureExtractor(mesh_path, "distance", config.mesh_samples)
+    mesh_points, symmetry_scalar = extractor.extract(plane=symmetry_data)
+
+    mesh_points = (
+        mesh_points.cpu().numpy() if torch.is_tensor(mesh_points) else mesh_points
+    )
+    symmetry_scalar = (
+        symmetry_scalar.cpu().numpy()
+        if torch.is_tensor(symmetry_scalar)
+        else symmetry_scalar
+    )
+    return mesh_points, symmetry_scalar
+
+
+def cache_canonical_symmetry_field(
+    config: LMOConfig, loader: LMOLoader, obj_id: int, out_dir: Path
+) -> Path:
+    mesh_points, symmetry_scalar = compute_canonical_symmetry_field(
+        config, loader, obj_id
+    )
+    out_path = out_dir / f"obj_{obj_id:06d}.npz"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        out_path,
+        mesh_points=mesh_points.astype(np.float32),
+        symmetry_scalar=symmetry_scalar.astype(np.float32),
+    )
+    return out_path
