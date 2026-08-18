@@ -17,11 +17,14 @@ class FeatureConfig:
     perspective: bool = True
     view_batch_size: int = 16
 
-    # --- stratic pipeline state ---
+    # --- pipeline state ---
     using_fibonacci_sampling: bool = True
     using_colorized_renders: bool = True
     early_subsampling: bool = True
     using_point_clouds: bool = True
+
+    # --- objects options ---
+    normalize_models: bool = True
 
     def print_summary(self) -> None:
         table = Table(title="FeatureConfig")
