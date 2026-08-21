@@ -5,6 +5,10 @@ import numpy as np
 from .geometry_utils import nn_residuals
 from .registrate import RegistratedData
 
+# DEPRECATED: used by registrate mockup.
+
+# TODO: this should be moved to the dataset_stats module
+
 
 @dataclass(frozen=True)
 class SanityMetrics:

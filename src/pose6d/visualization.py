@@ -8,8 +8,9 @@ import plotly.graph_objects as go
 from .registrate import RegistratedData
 from sklearn.decomposition import PCA
 
+# DEPRECATED: USED BY REGISTRATED MOCKUP
 
-# ----------------------------------------------------------------------------- PLY writer
+# TODO: this should use the loader api. Also, plotly should be dropped in favor of more efficient options (open3d or polyscopoe)
 
 
 def write_ply(

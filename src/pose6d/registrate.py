@@ -5,7 +5,7 @@ import numpy as np
 import trimesh  # may change to torch
 
 from pose6d.config import LMOConfig
-from pose6d.data_loader import LMOLoader, InstanceData, SymmetryData
+from pose6d.loader import LMOLoader, InstanceData, SymmetryData
 from pose6d.features import MeshFeatureExtractor
 from pose6d.geometry_utils import (
     backproject_depth,
@@ -15,6 +15,20 @@ from pose6d.geometry_utils import (
 )
 from model_wrappers import DINOWrapper
 from logger import registrate_logger
+
+"""
+DEPRECATED: registrate is a mockup intended as a sanity check for the basic pipeline. DINOv2 features were used
+
+this program does:
+    1. camera , depth and instance loading
+    2. construct a pointcloud from a mesh (sample by load_mesh_samples)
+    3. applies the mask to only select the visible points from an object
+    4. applies GT pose to the pT
+    5. obtains features from GT
+    6. propagates features from mesh to GT pose by closest neighbour
+
+then returns this data as a RegistratedData instance to be used in the visualization.py module (also deprecated!)
+"""
 
 
 # dataclass que contiene scene cloud, object cloud y posed mesh.
@@ -63,7 +77,7 @@ def load_mesh_samples(
     return tri[idx, 0] + u * a[idx] + w * b[idx]
 
 
-# WARGNING: object path resolver is currently hardcoded. It should change in case of a different naming convention
+# WARNING: object path resolver is currently hardcoded. It should change in case of a different naming convention
 # TODO: Handle errors
 def register_instance(
     loader: LMOLoader,
