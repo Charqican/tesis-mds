@@ -1,12 +1,13 @@
 from pathlib import Path
 import torch
+import numpy as np
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from pose6d.config import LMOConfig
-from pose6d.data_loader import LMOLoader
-from pose6d.training import SymmetryPointDataset
+from pose6d.loader import LMOLoader
+from pose6d.dataset import SymmetryPointDataset
 from pose6d.model import SymmetryFieldMLP
 
 CACHE_ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose/cache")
@@ -68,28 +69,66 @@ def main():
     # visualization of held-out + training to compare
     with torch.no_grad():
         for uid in HELD_OUT_UIDS:
-            pts, feats, target_raw = dataset.get_instance(uid)
+            pts, feats, target_raw, metadata = dataset.get_instance(uid)
             pred_raw = dataset.denormalize(model(feats.to(device)).cpu())
-            plot_target_vs_pred(pts, target_raw, pred_raw, title=f"held-out: {uid}")
+            rgb_image = loader.load_rgb(metadata["scene_id"], metadata["img_id"])
+            mask_image = loader.load_mask_visib(
+                metadata["scene_id"], metadata["img_id"], metadata["inst_idx"]
+            )
+            plot_target_vs_pred(
+                pts,
+                target_raw,
+                pred_raw,
+                rgb_image,
+                mask_image,
+                title=f"held-out: {uid}",
+            )
+
+            highlighted = highlight_segment(rgb_image, mask_image)
+            plot_segmentation(highlighted, title=f"Segmentación")
 
         train_uid = dataset.uid_list[0]
-        pts, feats, target_raw = dataset.get_instance(train_uid)
+        pts, feats, target_raw, metadata = dataset.get_instance(train_uid)
         pred_raw = dataset.denormalize(model(feats.to(device)).cpu())
-        plot_target_vs_pred(pts, target_raw, pred_raw, title=f"Training: {train_uid}")
+        rgb_image = loader.load_rgb(metadata["scene_id"], metadata["img_id"])
+        mask_image = loader.load_mask_visib(
+            metadata["scene_id"], metadata["img_id"], metadata["inst_idx"]
+        )
+        plot_target_vs_pred(
+            pts,
+            target_raw,
+            pred_raw,
+            rgb_image,
+            mask_image,
+            title=f"Training: {train_uid}",
+        )
+        highlighted = highlight_segment(rgb_image, mask_image)
+        plot_segmentation(highlighted, title=f"Segmentación")
         # pred_mm = dataset.denormalize(model(features).cpu())
+
         # rmse_mm = torch.sqrt(torch.mean((pred_mm - dataset.targets_raw) ** 2))
         # print(f"RMSE final en mm: {rmse_mm:.4f}")
 
 
 def plot_target_vs_pred(
-    points: torch.Tensor, target: torch.Tensor, pred: torch.Tensor, title: str
+    points: torch.Tensor,
+    target: torch.Tensor,
+    pred: torch.Tensor,
+    rgb,
+    mask,
+    title: str,
 ):
     points_np = points.numpy()
+    vmin = min(target.min().item(), pred.min().item())
+    vmax = max(target.max().item(), pred.max().item())
+
     fig = make_subplots(
         rows=1,
         cols=2,
-        specs=[[{"type": "scene"}, {"type": "scene"}]],
-        subplot_titles=("Target (GT)", "Predicción"),
+        specs=[
+            [{"type": "scene"}, {"type": "scene"}],
+        ],
+        subplot_titles=("Target (GT)", "Prediction"),
     )
     common = dict(
         x=points_np[:, 0],
@@ -99,19 +138,63 @@ def plot_target_vs_pred(
     )
     fig.add_trace(
         go.Scatter3d(
-            **common, marker=dict(size=2, color=target.numpy(), colorscale="RdBu")
+            **common,
+            marker=dict(
+                size=2,
+                color=target.numpy(),
+                colorscale="Viridis",
+                cmin=vmin,
+                cmax=vmax,
+                # showscale=True,
+                # colorbar=dict(
+                #    title="mm", x=0.45, len=0.75
+                # ),  # colorbar del panel izquierdo
+            ),
         ),
         row=1,
         col=1,
     )
     fig.add_trace(
         go.Scatter3d(
-            **common, marker=dict(size=2, color=pred.numpy(), colorscale="RdBu")
+            **common,
+            marker=dict(
+                size=2,
+                color=pred.numpy(),
+                colorscale="Viridis",
+                cmin=vmin,
+                cmax=vmax,
+                showscale=True,
+                colorbar=dict(
+                    title="mm", x=1.02, len=0.75
+                ),  # colorbar del panel derecho
+            ),
         ),
         row=1,
         col=2,
     )
-    fig.update_layout(title=title, height=600)
+    fig.update_layout(title=title, height=1200)
+    fig.show()
+
+
+def highlight_segment(
+    rgb: np.ndarray, mask: np.ndarray, darken_factor: float = 0.15
+) -> np.ndarray:
+    """Oscurece todo excepto la región de la máscara. Devuelve el array, no dibuja nada."""
+    out = rgb.astype(np.float32).copy()
+    out[~mask] *= darken_factor
+    return out.astype(np.uint8)
+
+
+def plot_segmentation(highlighted: np.ndarray, title: str = "Segmentation") -> None:
+    """Dibuja un array de imagen ya procesado (por ejemplo, salida de highlight_segment)."""
+    fig = make_subplots(
+        rows=1,
+        cols=1,
+        specs=[[{"type": "xy"}]],
+        subplot_titles=(title,),
+    )
+    fig.add_trace(go.Image(z=highlighted))
+    fig.update_layout(title=title, height=800)
     fig.show()
 
 
