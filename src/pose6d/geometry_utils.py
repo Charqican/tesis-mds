@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.spatial import KDTree
 
+# Collection of geometric function used by other modules.
+
 
 def transform_points(pts: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
     """Aplica pose model->camera: X_cam = R @ X + t."""
@@ -77,11 +79,6 @@ def propagate_symmetry_to_target(
     R: np.ndarray,
     t: np.ndarray,
 ) -> np.ndarray:
-    """Wrapper delgado sobre knn_propagate, para uso en tiempo de dataset-building."""
-    symmetry_scalar = np.asarray(symmetry_scalar).reshape(
-        -1
-    )  # fuerza 1D, sin importar (M,) o (M,1) de entrada
+    symmetry_scalar = np.asarray(symmetry_scalar).reshape(-1)  # enforces 1D
     propagated = knn_propagate(mesh_points, symmetry_scalar, target_points, R, t)
-    return propagated.reshape(
-        -1
-    )  # por si acaso, aunque con input 1D ya debería salir 1D
+    return propagated.reshape(-1)  # just in case!
