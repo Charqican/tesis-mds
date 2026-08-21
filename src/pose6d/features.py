@@ -1,7 +1,7 @@
 from pipelines.backprojected_features import extract_features_fm
-from pose6d.data_loader import SymmetryData
+from pose6d.loader import SymmetryData
 from pose6d.config import LMOConfig, LMOPath
-from pose6d.data_loader import LMOLoader
+from pose6d.loader import LMOLoader
 from model_wrappers import DINOWrapper
 from feature_extractor.config import FeatureConfig
 
@@ -14,11 +14,15 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# class for feature extraction.
-# exposes .extract() as its main method
+# TODO: this works but implementation is all over the place
+
+
+# WARNING: This was used mainly for DINOv2 features in the registration mockup, a refactor is planned as it is used in the pT extraction script at the propagate stage
 
 
 class MeshFeatureExtractor:
+    """Feature extractor class, exposes .extract() as its main entrypoint"""
+
     def __init__(
         self,
         mesh_path: Path | str,
@@ -55,41 +59,43 @@ class MeshFeatureExtractor:
             raise ValueError(f"Unknown mode: {self.mode}")
 
     def _distance_field(self, plane: SymmetryData) -> tuple[torch.Tensor, torch.Tensor]:
-        points = _sample_mesh_points(self._mesh, self.num_samples)
-        field = _compute_distance_field(points, plane)
+
+        points = self._sample_mesh_points(self._mesh, self.num_samples)
+        field = self._compute_distance_field(points, plane)
         return points, field
 
+    # Sample points using pytorch3d utilities
+    def _sample_mesh_points(self, mesh: Meshes, num_samples: int) -> torch.Tensor:
+        """Samplea puntos uniformemente sobre la superficie del mesh."""
+        points = sample_points_from_meshes(mesh, num_samples)  # (1, N, 3)
+        return points.squeeze(0)  # (N, 3)
 
-# Fix: put this inside the class as a "private" method
-def _sample_mesh_points(mesh: Meshes, num_samples: int) -> torch.Tensor:
-    """Samplea puntos uniformemente sobre la superficie del mesh."""
-    points = sample_points_from_meshes(mesh, num_samples)  # (1, N, 3)
-    return points.squeeze(0)  # (N, 3)
+    # INFO: this function uses abs value!
+    def _compute_distance_field(
+        self,
+        points: torch.Tensor,
+        plane: SymmetryData,
+    ) -> torch.Tensor:
+        """Helper function to compute distance field from the symmety plane using the internal SymmetryData dataclass"""
+        device = points.device
+        normal = plane.normal.to(device)
+        point = plane.plane_point.to(device)
+
+        diff = points - point  # (N, 3)
+        distances = diff @ normal  # (N,)
+        return distances.unsqueeze(-1).abs()  # (N, 1)
 
 
-# WARNING: Maybe there's overhead in copying to device instead of using CPU
-def _compute_distance_field(
-    points: torch.Tensor,
-    plane: SymmetryData,
-) -> torch.Tensor:
-    """Calcula distancia con signo al plano de simetría."""
-    device = points.device
-    normal = plane.normal.to(device)
-    point = plane.plane_point.to(device)
-
-    diff = points - point  # (N, 3)
-    distances = diff @ normal  # (N,)
-    return distances.unsqueeze(-1).abs()  # (N, 1)
-
-
+# function used by the pT extractor script. It directly uses the MeshFeatureExtractor
+# WARNING: this function is coupled to the LMODataset, but can be easily be decoupled in the future
 def compute_canonical_symmetry_field(
     config: LMOConfig, loader: LMOLoader, obj_id: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Calcula el campo de simetría (distancia con signo al plano) sobre
-    el mesh canónico completo. Propiedad del OBJETO, no de la instancia
-    -- se llama una sola vez por obj_id, se cachea en disco.
-    Devuelve (mesh_points, symmetry_scalar), mismo orden entre ambos.
+    Helper function that calls MeshFeatureExtractor from this module.
+
+    params: (config: LMOConfig, loader. LMOLoader, obj_id: int)
+    Returns (mesh_points, symmetry_scalar).
     """
     symmetry_data = loader.load_symmetry_plane(obj_id)
     if symmetry_data is None:
@@ -110,6 +116,7 @@ def compute_canonical_symmetry_field(
     return mesh_points, symmetry_scalar
 
 
+# DEPRECATED: this function is no longer in use after changes in the file system format
 def cache_canonical_symmetry_field(
     config: LMOConfig, loader: LMOLoader, obj_id: int, out_dir: Path
 ) -> Path:
