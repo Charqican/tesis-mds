@@ -10,8 +10,8 @@ import os
 @dataclass(frozen=True)
 class LMOPath:
     """
-    File structure expected:
-    lmo/
+    Path resolver dataclass. Used internally by loader.
+    Expected file structure lmo/
     - models/
     - models_eval/
     - test/
@@ -26,7 +26,7 @@ class LMOPath:
     @property
     def models_dir(self) -> Path:
         """
-        Estructure expected:
+        Expected file structure:
         models/
         - models_info.json
         - obj_0000xx.json
@@ -39,9 +39,7 @@ class LMOPath:
         return self.models_dir / "models_info.json"
 
     # points to a scene in train or split using the scene_id
-    # TODO: changing the split is to cumbersome, we should look into other options
-    # WARNING: use only test split
-    def scene_dir(self, scene_id: int, split: str = "test") -> Path:
+    def scene_dir(self, scene_id: int) -> Path:
         """
         Expected structure
         split/
@@ -54,34 +52,32 @@ class LMOPath:
             - scene_gt.json
             - scene_gt_info.json
         """
-        return self.root / split / f"{scene_id:06d}"
+        return self.root / f"{scene_id:06d}"
 
     #  points to the rgb images of a scene
-    def rgb_path(self, scene_id: int, img_id: int, split: str = "test") -> Path:
-        return self.scene_dir(scene_id, split=split) / "rgb" / f"{img_id:06d}.png"
+    def rgb_path(self, scene_id: int, img_id: int) -> Path:
+        return self.scene_dir(scene_id) / "rgb" / f"{img_id:06d}.png"
 
     # points to the depth images of a scene
-    def depth_path(self, scene_id: int, img_id: int, split: str = "test") -> Path:
-        return self.scene_dir(scene_id, split) / "depth" / f"{img_id:06d}.png"
+    def depth_path(self, scene_id: int, img_id: int) -> Path:
+        return self.scene_dir(scene_id) / "depth" / f"{img_id:06d}.png"
 
     # gets a mask using the img_id and the 'instance_id', the latter refering to the order in which it appers in the corresponding scene_gt.json line
-    def mask_visible_path(
-        self, scene_id: int, img_id: int, instance_id: int, split: str = "test"
-    ) -> Path:
+    def mask_visible_path(self, scene_id: int, img_id: int, instance_id: int) -> Path:
         return (
-            self.scene_dir(scene_id, split=split)
+            self.scene_dir(scene_id)
             / "mask_visib"
             / f"{img_id:06d}_{instance_id:06d}.png"
         )
 
-    def scene_camera_path(self, scene_id: int, split: str = "test") -> Path:
-        return self.scene_dir(scene_id, split=split) / "scene_camera.json"
+    def scene_camera_path(self, scene_id: int) -> Path:
+        return self.scene_dir(scene_id) / "scene_camera.json"
 
-    def scene_gt_path(self, scene_id: int, split: str = "test") -> Path:
-        return self.scene_dir(scene_id, split=split) / "scene_gt.json"
+    def scene_gt_path(self, scene_id: int) -> Path:
+        return self.scene_dir(scene_id) / "scene_gt.json"
 
-    def scene_gt_info_path(self, scene_id: int, split="test") -> Path:
-        return self.scene_dir(scene_id, split=split) / "scene_gt_info.json"
+    def scene_gt_info_path(self, scene_id: int) -> Path:
+        return self.scene_dir(scene_id) / "scene_gt_info.json"
 
     # setup for this dataclass using .env file. It searchs for a LMO_ROOT key
     @classmethod
@@ -97,7 +93,8 @@ class LMOPath:
         return cls(root=Path(root))
 
 
-# TODO: configuration should be decoupled from path model. we should abstrct LMOPath to make future implementations easier
+# TODO: configuration should be decoupled from path model. we should abstrct LMOPath (eg. PathResolver) to make future dataset implementations easier
+# TODO: Track if mesh_samples actually makes it to the implementation or if it ends up lost
 @dataclass(frozen=True)
 class LMOConfig:
     """Parámetros del dataset y del pipeline."""

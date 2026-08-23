@@ -15,8 +15,7 @@ import json
 """
 
 
-# TODO: The use of dataclasses exposes a common interface that can be used to decouple the loader from the schema and file names of each dataset. this abstraction is proposed as a future improvement in case of multiple sources of data.
-# TODO: figure out how to implement in a simple way the split (train, test, eval) if needed.
+# TODO: if needed a 'parser' can be abstracted for differnet datasets
 # TODO: missing axial symmetry implementation and getters
 
 
@@ -59,20 +58,49 @@ class ModelInfo:
 
 
 # WARNING: in case of multiple symmetries only one is returned
-# WARNING: 'split' case not implemented, looking into less verbose implementations, fallback to "test" scene
 class LMOLoader:
     """
-    Loads the actual data from the LMO dataset using LMOConfig and LMOPath as a path resolver
+    helper dataclass that resolves, loads and parses data from the raw dataset.
 
-    main methods:
-        load_camera: returns (K, depth_scale) for a given image
-        load_instances: returns a list of InstanceData of a given image
-        load_depth: returns the depth image for a given image_id
-        load_rgb: returns the rgb image for a given image_id
-        load_mask_visib: return the visible mask for a given instance inside a frame
-        load_models_info: returns the parsed metadata of a given object
-        list_img_ids: returns every img id
-        iter_frames: returns an iterator of frames containing the instances
+    ## Fields
+
+    config: LMOConfig
+        A config dataclass that containts the necessary information to load the dataset
+
+    ## Methods
+
+    load_camera(scene_id, img_id):
+        returns (K, depth_scale) for a given image.
+
+    load_instances(scene_id, img_id):
+        returns a list of instances (partial objects) of a given image.
+
+    load_depth(scene_id, img_id):
+        returns the depth image for a given frame using its img_id.
+
+    load_rgb(scene_id, img_id):
+        returns the rgb image for a given frame by its image_id.
+
+    load_mask_visib(scene_id, img_id, inst_idx):
+        return the visible mask for a given instance inside a frame.
+
+    load_models_info:
+        returns the parsed metadata of all objects
+
+    list_img_ids(scene_id):
+        returns every frame id (img_id) inside a scene
+
+    iter_frames(scene_id):
+        returns an iterator of FrameData of every image inside a scene
+
+    load_symmetry_data(obj_id):
+        returns a SymmetryData if the object has symmetries, None if not. It only returns one plane.
+
+    symmetric_obj_ids():
+        returns every symmetric object id.
+
+    parse_instance_uid(uid).
+        returns every id that composes an uid. An uid identifies a partial pointcloud of a given instance of an object in a particular frame inside a scene.
     """
 
     def __init__(self, config: LMOConfig) -> None:
@@ -84,7 +112,6 @@ class LMOLoader:
         return cls(LMOConfig.from_root(root))
 
     def load_camera(self, scene_id: int, img_id: int) -> tuple[np.ndarray, float]:
-        """Retorna (K, depth_scale) para una imagen."""
         data = self._load_json_int_keys(self.paths.scene_camera_path(scene_id))
         cam = data[img_id]
         K = np.asarray(cam["cam_K"], dtype=np.float64).reshape(3, 3)
@@ -92,7 +119,7 @@ class LMOLoader:
         return K, depth_scale
 
     def load_instances(self, scene_id: int, img_id: int) -> list[InstanceData]:
-        """Retorna todas las instancias de una imagen."""
+        "Returns all instances of an image as a list of InstanceData"
         gt = self._load_json_int_keys(self.paths.scene_gt_path(scene_id))
         info = self._load_json_int_keys(self.paths.scene_gt_info_path(scene_id))
 
@@ -113,6 +140,7 @@ class LMOLoader:
         return parsed
 
     def load_models_info(self) -> dict[int, ModelInfo]:
+        "Returns a dictionary with every object ModelInfo as a value and id as a key"
         raw = json.loads(self.cfg.paths.models_info.read_text())
         result = {}
         for obj_id_str, info in raw.items():
@@ -207,7 +235,7 @@ class LMOLoader:
         }
 
     def parse_instance_uid(self, uid: str) -> tuple[int, int, int, int]:
-        """retrieves the instance ids: uid -> (scene_id, img_id, obj_id, inst_idx)."""
+        """retrieves the instance ids of a given uid: uid -> (scene_id, img_id, obj_id, inst_idx)."""
         parts = uid.split("_")
         scene_id = int(parts[0].removeprefix("scene"))
         img_id = int(parts[1].removeprefix("img"))
@@ -258,5 +286,6 @@ class LMOLoader:
 
 
 # uid generator
+# REFACTOR: maybe this should go inside its dataclass
 def instance_uid(scene_id: int, img_id: int, obj_id: int, inst_idx: int) -> str:
     return f"scene{scene_id:06d}_img{img_id:06d}_obj{obj_id:06d}_inst{inst_idx:02d}"

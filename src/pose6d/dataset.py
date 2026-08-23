@@ -3,7 +3,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+"""
+pytorch implementation of dataset to be passed to a dataloader to handle batching.
+"""
 
+
+# INFO : this implementation is eager, Lazy loading can be implementated in the future to reduce memory usage
 class SymmetryFieldPointDataset(Dataset):
     """
     This Dataset samples points from the point cloud instances.
@@ -25,7 +30,7 @@ class SymmetryFieldPointDataset(Dataset):
             target_path = target_dir / f"{uid}.npz"
             input_path = input_dir / f"{uid}.npz"
 
-            # WARNING: this may requiere a warning
+            # TODO: this requieres a user warning
             if not (points_path.exists() and target_path.exists()):
                 continue
 
