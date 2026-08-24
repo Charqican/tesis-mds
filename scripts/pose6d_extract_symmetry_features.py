@@ -35,12 +35,12 @@ the same folder, but it is expected to contain point_pT
 
 def main() -> None:
     args = parse_args()
-
+    print(f"dataset: {args.dataset}, root: {args.root}, pt: {args.points_pt}")
     config = LMOConfig.from_root(args.dataset)
     loader = LMOLoader(config)
 
     canonical_cache: dict[int, tuple] = {}
-    args.output.mkdir(parents=True, exist_ok=True)
+    args.target.mkdir(parents=True, exist_ok=True)
 
     pt_files = sorted(args.points_pt.rglob("*.npz"))
     if not pt_files:
@@ -70,10 +70,10 @@ def main() -> None:
             instance.t,
         )
 
-        np.savez(args.output / pt_path.name, target=target.astype(np.float32))
+        np.savez(args.target / pt_path.name, target=target.astype(np.float32))
 
-    n_out = len(list(args.output.glob("*.npz")))
-    print(f"Done: {n_out} instances in {args.output}")
+    n_out = len(list(args.target.glob("*.npz")))
+    print(f"Done: {n_out} instances in {args.target}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
         "-e",
         type=str,
         default="scalarfield",
-        help="name given to a subfolder containing the resulting artefacts",
+        help="name given to a subfolder containing the resulting artefacts. Default: scalarfield",
     )
 
     args = p.parse_args()
@@ -120,10 +120,8 @@ def parse_args() -> argparse.Namespace:
 
     exp = args.experiment_name
 
-    if args.points_pt is None:
-        args.points_pt = args.root / "lmo" / "cache" / "points_pT"
-    if args.output is None:
-        args.output = args.root / "lmo" / exp / "training" / "target"
+    args.points_pt = args.root / "lmo" / "cache" / "points_pT"
+    args.target = args.root / "lmo" / exp / "training" / "target"
 
     return args
 

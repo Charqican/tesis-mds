@@ -32,7 +32,7 @@ def main() -> None:
     instances = extract_scene_instances_pcs(
         loader, args.scene_id, list(target_obj_ids), args.min_visib
     )
-    cache_path = args.root / "lmo" / args.experiment_name / "cache"
+    cache_path = args.root / "lmo" / "cache"
     saved = save_pointclouds(instances, cache_path / "points_pT")
 
     print(f"Saved {len(saved)} instances.")
