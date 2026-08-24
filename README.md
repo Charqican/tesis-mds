@@ -67,6 +67,8 @@ python download_ckpts.py
 
 deactivate
 ```
+
+If you are running this in a consumer GPU you probably want to deactivate enable_flash in the dGedi configuration located at external/dgedi/config_dgedi.yaml by changing its value to false.
 ## Usage
 
 1. The lmo dataset needs to be downloaded separately from the [original source](https://bop.felk.cvut.cz/datasets/). The data processing scripts targets the directory of the dataset using arguments or by configuring an .env file. An .env-example has been provided as an example. 
