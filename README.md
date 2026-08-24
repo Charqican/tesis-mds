@@ -19,7 +19,7 @@ This project was build using the uv package manager, an extremely fast and simpl
 
 1. Clone this repository in your local machine. This will clone the dGedi submodule as well. 
 ```bash
-git clone https://github.com/Charqican/tesis-mds.git
+git clone --recurse-submodules https://github.com/Charqican/tesis-mds.git
 cd tesis-mds
 ```
 2. Install uv:
