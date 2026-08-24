@@ -52,7 +52,13 @@ class LMOPath:
             - scene_gt.json
             - scene_gt_info.json
         """
-        return self.root / f"{scene_id:06d}"
+        try:
+            path = self.root / "test" / f"{scene_id:06d}"
+
+        except FileNotFoundError:
+            path = self.root / "train" / f"{scene_id:06d}"
+
+        return path
 
     #  points to the rgb images of a scene
     def rgb_path(self, scene_id: int, img_id: int) -> Path:
