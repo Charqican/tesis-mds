@@ -2,7 +2,7 @@
 
 ## About the code and documentation
 ...
-## InstalLation 
+## Installation 
 
 This repository manages two python versions.
 - Python 3.12: main env used in experiments of DINOv2 features and model training
@@ -92,3 +92,7 @@ external/dgedi_env/bin/python .external/extract_dgedi_features.py
 ```bash
 uv run marimo edit ./notebooks/Pose6d_symmetry.py
 ```
+
+### File structure
+
+... 
