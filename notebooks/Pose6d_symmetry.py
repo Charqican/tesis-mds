@@ -59,7 +59,7 @@ def _():
     from pose6d.config import LMOConfig, LMOPath
     from pose6d.loader import LMOLoader
     from pose6d.dataset_stats import print_summary_table, _dataset_summary
-    from pose6d.dataset import SymmetryFieldPointDataset
+    from pose6d.dataset import SymmetryFieldPointDataset, SymmetryFieldInstanceDataset
     from pose6d.model import SymmetryFieldMLP
     from pathlib import Path
     import matplotlib.pyplot as plt
@@ -82,21 +82,16 @@ def _():
     config = LMOConfig.from_root(lmo_root) 
     loader= LMOLoader(config) # uses only the 
     print_summary_table(_dataset_summary(loader, 2))
-
     return (
-        DataLoader,
         FEATURES_INPUT_DIR,
         LMOLoader,
         POINTS_PT_DIR,
-        Subset,
         SymmetryFieldMLP,
         SymmetryFieldPointDataset,
         TARGET_DIR,
         loader,
         mo,
-        plt,
         random,
-        sns,
         torch,
     )
 
@@ -137,143 +132,100 @@ def _(LMOLoader, SymmetryFieldPointDataset, random):
 
 @app.cell
 def _(
-    DataLoader,
     FEATURES_INPUT_DIR,
     POINTS_PT_DIR,
-    Subset,
     SymmetryFieldMLP,
     SymmetryFieldPointDataset,
     TARGET_DIR,
     loader,
-    plt,
     reserve_test_uids,
-    sns,
     torch,
 ):
-    def exp1():
+    def exp1_efficient():
         dataset = SymmetryFieldPointDataset(POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        # Splits 
         test_uids = reserve_test_uids(dataset, loader, n_per_obj=2)
         train_uids = set(dataset.uid_list) - test_uids
         dataset.assign_split(train_uids=train_uids, val_uids=set(), test_uids=test_uids)
 
-        # In this case, my 4G GPU is enough. 
-        dataset.features = dataset.features.to(device)
-        dataset.targets = dataset.targets.to(device)
-    
-        # split 0 = val, split 1 = train, split 2 = test
-        train_idx = (dataset.split == 0).nonzero(as_tuple=True)[0]
-        test_idx = (dataset.split == 2).nonzero(as_tuple=True)[0]
-    
-        train_loader = DataLoader(Subset(dataset, train_idx), batch_size=60000, shuffle=True)
-    
-        model = SymmetryFieldMLP(in_dim=dataset.features.shape[1]).to(device)
+        # Masks (train = 0, val = 1, test = 2)
+        train_mask = dataset.split == 0
+        test_mask  = dataset.split == 2
+
+        # Move data to GPU
+        # TODO: looking into options in case VRAM is not sufficient (for now order of 100mb are needed)
+        train_features = dataset.features[train_mask].to(device)
+        train_targets  = dataset.targets[train_mask].to(device)
+        test_features = dataset.features[test_mask].to(device)
+        test_targets  = dataset.targets[test_mask].to(device)
+
+        # Load model
+        model = SymmetryFieldMLP(in_dim=train_features.shape[1]).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         loss_fn = torch.nn.MSELoss()
-    
-        loss_ = []
-        LOG_ = 5
-        N_EPOCHS = 250
-        for epoch in range(N_EPOCHS):
-            epoch_loss = 0.0
-            for features, targets in train_loader:
+
+        # hypr parameters
+        batch_size = 60000
+        n_epochs = 250
+        log_every = 5
+
+        # calculate total batches
+        n_train = train_features.shape[0]
+        n_batches = (n_train + batch_size - 1) // batch_size
+
+        # loss history for plotting
+        loss_history = []
+        for epoch in range(n_epochs):
+            # Shuffle using a random permutation. A different one is used in every epoch
+            perm = torch.randperm(n_train, device=device)
+            epoch_loss = .0
+
+            for i in range(n_batches):
+                start = i * batch_size
+                end = min(start + batch_size, n_train)
+                perm_mask = perm[start:end] # obtain a slice of the permutation ()
+            
+                features = train_features[perm_mask] # index dgedi features
+                targets = train_targets[perm_mask] # index symm features
+
                 optimizer.zero_grad()
-                pred = model(features)
-                loss = loss_fn(pred, targets)
-                loss.backward()
+                pred = model(features) # make prediction
+                loss = loss_fn(pred, targets) # calculate loss
+                loss.backward() # propagate
                 optimizer.step()
-                epoch_loss += loss.item()
-            if epoch % LOG_ == 0:
-                mean_epoch_loss = epoch_loss / len(train_loader)
-                print(f"epoch {epoch}: loss={mean_epoch_loss:.6f}")
-                loss_.append(mean_epoch_loss)
 
-        sns.lineplot(x=list(range(0, N_EPOCHS, 5)), y = loss_)
+                epoch_loss += loss.item()
+
+            mean_epoch_loss = epoch_loss / n_batches
+
+            if epoch % log_every == 0: # log every k to avoid spamming the console
+                print(f"epoch {epoch}: loss={mean_epoch_loss:.4f}")
+                loss_history.append(mean_epoch_loss) # append to history
+
+        # Using hold out frames to test prediction. It is not expected to generalize. 
+        model.eval()
+        with torch.no_grad():
+            test_pred = model(test_features)
+            test_loss = loss_fn(test_pred, test_targets).item()
+        print(f"Test loss: {test_loss:.4f}")
+
+        # Plot
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        sns.lineplot(x=list(range(0, n_epochs, log_every)), y=loss_history)
         plt.title("Loss")
         plt.show()
 
-    return (exp1,)
+    return (exp1_efficient,)
 
 
 @app.cell
-def _(exp1):
-    exp1()
-
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Training Example - Instance
-    """)
-    return
-
-
-@app.cell
-def _(
-    DataLoader,
-    FEATURES_INPUT_DIR,
-    POINTS_PT_DIR,
-    Subset,
-    SymmetryFieldInstanceDataset,
-    SymmetryFieldMLP,
-    TARGET_DIR,
-    loader,
-    plt,
-    reserve_test_uids,
-    sns,
-    symmetry_collate,
-    torch,
-):
-    def exp2():
-        dataset_inst = SymmetryFieldInstanceDataset(POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR)
-
-        test_uids = reserve_test_uids(dataset_inst, loader, n_per_obj=2)
-        train_uids = set(dataset_inst.uid_list) - test_uids
-        dataset_inst.assign_split(train_uids=train_uids, val_uids=set(), test_uids=test_uids)
-    
-        train_indices = [
-            i for i, s in enumerate(dataset_inst.split_per_instance) if s == 0
-        ]
-    
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-        train_loader_inst = DataLoader(
-            Subset(dataset_inst, train_indices),
-            batch_size=64,
-            shuffle=True,
-            collate_fn=symmetry_collate,
-        )
-    
-        model_inst = SymmetryFieldMLP(in_dim=dataset_inst._features[0].shape[1]).to(device)
-        optimizer_inst = torch.optim.Adam(model_inst.parameters(), lr=1e-3)
-        loss_fn = torch.nn.MSELoss()
-    
-        loss_inst = []
-        LOG_ = 25
-        N_EPOCHS = 1000
-        for epoch in range(N_EPOCHS):
-            epoch_loss = 0.0
-            for features, targets, batch_idx in train_loader_inst:
-                features, targets = features.to(device), targets.to(device)
-                optimizer_inst.zero_grad()
-                pred = model_inst(features)
-                loss = loss_fn(pred, targets)
-                loss.backward()
-                optimizer_inst.step()
-                epoch_loss += loss.item()
-            if epoch % LOG_ == 0:
-                mean_epoch_loss = epoch_loss / len(train_loader_inst)
-                print(f"epoch {epoch}: loss={mean_epoch_loss:.6f}")
-                loss_inst.append(mean_epoch_loss)
-
-        sns.lineplot(x=list(range(0, N_EPOCHS, 25)), y = loss_inst)
-        plt.title("Loss")
-        plt.show()
-
+def _(exp1_efficient):
+    exp1_efficient()
     return
 
 
