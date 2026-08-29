@@ -53,6 +53,14 @@ def _(mo):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Config
+    """)
+    return
+
+
 @app.cell
 def _():
     import marimo as mo
@@ -61,10 +69,16 @@ def _():
     from pose6d.dataset_stats import print_summary_table, _dataset_summary
     from pose6d.dataset import SymmetryFieldPointDataset, SymmetryFieldInstanceDataset
     from pose6d.model import SymmetryFieldMLP
+    from pose6d.geometry_utils import backproject_depth, transform_points
+    from pose6d.preprocessing import extract_frame_instances_pcs 
+
     from pathlib import Path
+    import numpy as np
     import matplotlib.pyplot as plt
+    import plotly.graph_objects as go
     import seaborn as sns
     import torch
+    import trimesh
     from torch.utils.data import DataLoader, Subset
     import json
     import glob
@@ -84,16 +98,160 @@ def _():
     print_summary_table(_dataset_summary(loader, 2))
     return (
         FEATURES_INPUT_DIR,
+        LMOConfig,
         LMOLoader,
         POINTS_PT_DIR,
         SymmetryFieldMLP,
         SymmetryFieldPointDataset,
         TARGET_DIR,
+        backproject_depth,
+        config,
+        extract_frame_instances_pcs,
+        go,
         loader,
         mo,
+        np,
         random,
         torch,
+        transform_points,
+        trimesh,
     )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Functions
+    """)
+    return
+
+
+@app.cell
+def _(
+    LMOConfig,
+    LMOLoader,
+    backproject_depth,
+    extract_frame_instances_pcs,
+    go,
+    np,
+    transform_points,
+    trimesh,
+):
+    # Visualization
+    def plot_frame_meshes_and_sensor(loader: LMOLoader, config: LMOConfig, scene_id: int, img_id: int) -> None:
+        K, depth_scale = loader.load_camera(scene_id, img_id)
+        depth_image = loader.load_depth(scene_id, img_id)
+        frame_point_cloud = backproject_depth(depth_image, K, depth_scale, stride=config.depth_stride)
+
+        traces = [
+            go.Scatter3d(
+                x=frame_point_cloud[:, 0],
+                y=frame_point_cloud[:, 1],
+                z=frame_point_cloud[:, 2],
+                mode="markers",
+                marker=dict(size=1, color="gray", opacity=0.3),
+                name="sensor",
+            )
+        ]
+
+        instances = loader.load_instances(scene_id, img_id)
+        for inst_idx, instance in enumerate(instances):
+            mesh_path = config.paths.model_path(instance.obj_id)
+            mesh = trimesh.load(mesh_path)
+
+            posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
+            faces = mesh.faces
+
+            traces.append(
+                go.Mesh3d(
+                    x=posed_vertices[:, 0],
+                    y=posed_vertices[:, 1],
+                    z=posed_vertices[:, 2],
+                    i=faces[:, 0],
+                    j=faces[:, 1],
+                    k=faces[:, 2],
+                    opacity=1,
+                    name=f"obj_{instance.obj_id} (inst {inst_idx})",
+                    showlegend=True,
+                )
+            )
+
+        fig = go.Figure(data=traces)
+        fig.update_layout(
+            title=f"Scene {scene_id} / Frame {img_id}",
+            height=700,
+            scene=dict(aspectmode="data"),
+        )
+        fig.show()
+
+
+
+    # TODO: add pT features, add a flag for 
+    def plot_mesh_instance_visible(loader: LMOLoader, config, scene_id: int, img_id: int, inst_idx: int, feature_data: np.ndarray = None):
+        # Obatin instance mesh
+        instance = loader.load_instances(scene_id, img_id)[inst_idx]
+        obj_id = instance.obj_id
+    
+        mesh_path = config.paths.model_path(instance.obj_id)
+        mesh = trimesh.load(mesh_path)
+        posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
+        faces = mesh.faces
+        traces = [
+            go.Mesh3d(
+                x=posed_vertices[:,0],
+                y=posed_vertices[:,1],
+                z=posed_vertices[:,2],
+                i=faces[:,0],
+                j=faces[:,1],
+                k=faces[:,2],
+                opacity=.7,
+                name=f'obj : {instance.obj_id} (instance {inst_idx})',
+                showlegend=True,
+            )
+        ]
+        # this will extract all objects in a frame. in case of memory issues, implement instance base extractor.
+        pTr_iterator = extract_frame_instances_pcs(loader, scene_id, img_id, [obj_id])
+        uid, visib_posed_pcs = [t for t in pTr_iterator][inst_idx] 
+        traces.append(go.Scatter3d(
+                x = visib_posed_pcs[:, 0],
+                y = visib_posed_pcs[:, 1],
+                z = visib_posed_pcs[:, 2],
+                mode = "markers",
+                marker=dict(size=2, color="yellow", opacity=.5),
+                name=f"Visible (instance {inst_idx})",
+                showlegend=True,
+        ))
+        fig = go.Figure(data=traces)
+        fig.update_layout(
+            title=f"Scene {scene_id} | Frame {img_id} | object {obj_id} | instance {inst_idx}",
+            height=700,
+            scene=dict(aspectmode="data"),
+        )
+        fig.show()
+
+
+
+
+    def plot_object_point_cloud(loader: LMOLoader, obj_id: int, features: np.ndarray = None):
+        pass
+
+
+    def show_instance_segment(loader: LMOLoader, scene_id: int, img_id: int, obj_id: int, inst_idx: int):
+        pass
+
+    return plot_frame_meshes_and_sensor, plot_mesh_instance_visible
+
+
+@app.cell
+def _(config, loader, plot_frame_meshes_and_sensor):
+    plot_frame_meshes_and_sensor(loader, config, 2, 47 )
+    return
+
+
+@app.cell
+def _(config, loader, plot_mesh_instance_visible):
+    plot_mesh_instance_visible(loader, config, 2, 47, 1)
+    return
 
 
 @app.cell(hide_code=True)
@@ -187,7 +345,7 @@ def _(
                 start = i * batch_size
                 end = min(start + batch_size, n_train)
                 perm_mask = perm[start:end] # obtain a slice of the permutation ()
-            
+
                 features = train_features[perm_mask] # index dgedi features
                 targets = train_targets[perm_mask] # index symm features
 
@@ -226,6 +384,19 @@ def _(
 @app.cell
 def _(exp1_efficient):
     exp1_efficient()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Experiment: Predict instances symmetry fields
+
+    - LMODataset
+    - Using scenes ... for training
+    - testing with scene 2
+    - Simple MLP
+    """)
     return
 
 
