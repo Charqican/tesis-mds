@@ -111,6 +111,23 @@ class LMOLoader:
     def from_root(cls, root: str | Path) -> "LMOLoader":
         return cls(LMOConfig.from_root(root))
 
+    # parse ids into an unique identifier (uid) Simpler than a hash table
+    @classmethod
+    def instance_uid(
+        cls, scene_id: int, img_id: int, obj_id: int, inst_idx: int
+    ) -> str:
+        return f"scene{scene_id:06d}_img{img_id:06d}_obj{obj_id:06d}_inst{inst_idx:02d}"
+
+    @classmethod
+    def parse_instance_uid_(cls, uid: str) -> tuple[int, int, int, int]:
+        """retrieves the instance ids of a given uid: uid -> (scene_id, img_id, obj_id, inst_idx)."""
+        parts = uid.split("_")
+        scene_id = int(parts[0].removeprefix("scene"))
+        img_id = int(parts[1].removeprefix("img"))
+        obj_id = int(parts[2].removeprefix("obj"))
+        inst_idx = int(parts[3].removeprefix("inst"))
+        return scene_id, img_id, obj_id, inst_idx
+
     def load_camera(self, scene_id: int, img_id: int) -> tuple[np.ndarray, float]:
         data = self._load_json_int_keys(self.paths.scene_camera_path(scene_id))
         cam = data[img_id]
@@ -234,6 +251,7 @@ class LMOLoader:
             if info.symmetries_discrete is not None
         }
 
+    # @Deprecated: use class method instead
     def parse_instance_uid(self, uid: str) -> tuple[int, int, int, int]:
         """retrieves the instance ids of a given uid: uid -> (scene_id, img_id, obj_id, inst_idx)."""
         parts = uid.split("_")
@@ -285,7 +303,6 @@ class LMOLoader:
         return best_idx, instances[best_idx]
 
 
-# uid generator
-# REFACTOR: maybe this should go inside its dataclass
+# @ DEPRECATED. prefer classmethod
 def instance_uid(scene_id: int, img_id: int, obj_id: int, inst_idx: int) -> str:
     return f"scene{scene_id:06d}_img{img_id:06d}_obj{obj_id:06d}_inst{inst_idx:02d}"

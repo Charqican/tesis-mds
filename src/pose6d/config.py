@@ -38,6 +38,9 @@ class LMOPath:
     def models_info(self) -> Path:
         return self.models_dir / "models_info.json"
 
+    def model_path(self, obj_id: int):
+        return self.models_dir / f"obj_{obj_id:06d}.ply"
+
     # points to a scene in train or split using the scene_id
     def scene_dir(self, scene_id: int) -> Path:
         """
