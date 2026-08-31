@@ -191,7 +191,8 @@ def _(
         # Obatin instance mesh
         instance = loader.load_instances(scene_id, img_id)[inst_idx]
         obj_id = instance.obj_id
-    
+        print(obj_id)
+
         mesh_path = config.paths.model_path(instance.obj_id)
         mesh = trimesh.load(mesh_path)
         posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
@@ -211,7 +212,7 @@ def _(
         ]
         # this will extract all objects in a frame. in case of memory issues, implement instance base extractor.
         pTr_iterator = extract_frame_instances_pcs(loader, scene_id, img_id, [obj_id])
-        uid, visib_posed_pcs = [t for t in pTr_iterator][inst_idx] 
+        uid, visib_posed_pcs = next(pTr_iterator)
         traces.append(go.Scatter3d(
                 x = visib_posed_pcs[:, 0],
                 y = visib_posed_pcs[:, 1],
@@ -250,7 +251,7 @@ def _(config, loader, plot_frame_meshes_and_sensor):
 
 @app.cell
 def _(config, loader, plot_mesh_instance_visible):
-    plot_mesh_instance_visible(loader, config, 2, 47, 1)
+    plot_mesh_instance_visible(loader, config, 2, 47, 2)
     return
 
 
@@ -397,6 +398,19 @@ def _(mo):
     - testing with scene 2
     - Simple MLP
     """)
+    return
+
+
+@app.cell
+def _(
+    FEATURES_INPUT_DIR,
+    POINTS_PT_DIR,
+    SymmetryFieldPointDataset,
+    TARGET_DIR,
+):
+    def exp_1():
+        dataset = SymmetryFieldPointDataset(POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR)
+
     return
 
 
