@@ -82,3 +82,13 @@ def propagate_symmetry_to_target(
     symmetry_scalar = np.asarray(symmetry_scalar).reshape(-1)  # enforces 1D
     propagated = knn_propagate(mesh_points, symmetry_scalar, target_points, R, t)
     return propagated.reshape(-1)  # just in case!
+
+
+def subsample_points(
+    points: np.ndarray, max_points: int, seed: int = 123
+) -> np.ndarray:
+    """Subsampling aleatorio simple, reproducible. Alternativa a FPS -- más
+    barato, y suficiente si no necesitás cobertura geométrica óptima."""
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(points.shape[0], size=max_points, replace=False)
+    return points[idx]
