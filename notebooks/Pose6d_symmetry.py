@@ -67,10 +67,10 @@ def _():
     from pose6d.config import LMOConfig, LMOPath
     from pose6d.loader import LMOLoader
     from pose6d.dataset_stats import print_summary_table, _dataset_summary
-    from pose6d.dataset import SymmetryFieldPointDataset, SymmetryFieldInstanceDataset
+    from pose6d.dataset import SymmetryFieldPointDataset, split_by_scene
     from pose6d.model import SymmetryFieldMLP
     from pose6d.geometry_utils import backproject_depth, transform_points
-    from pose6d.preprocessing import extract_frame_instances_pcs 
+    from pose6d.preprocessing import extract_instances_pcs 
 
     from pathlib import Path
     import numpy as np
@@ -85,33 +85,27 @@ def _():
     import random
 
     # TODO: Check if data exist in the expected folders, throw an exception if not
-
     lmo_root = Path("/mnt/data/dev/dataset/tesis/BOP/lmo/lmo")
-
-    ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
-    POINTS_PT_DIR = ROOT / "lmo/cache/points_pT/"
-    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield/training/input/"
-    TARGET_DIR = ROOT/ "lmo/scalarfield/training/target/"
-
     config = LMOConfig.from_root(lmo_root) 
     loader= LMOLoader(config) # uses only the 
     print_summary_table(_dataset_summary(loader, 2))
     return (
-        FEATURES_INPUT_DIR,
         LMOConfig,
         LMOLoader,
-        POINTS_PT_DIR,
+        Path,
         SymmetryFieldMLP,
         SymmetryFieldPointDataset,
-        TARGET_DIR,
         backproject_depth,
         config,
-        extract_frame_instances_pcs,
+        extract_instances_pcs,
         go,
         loader,
         mo,
         np,
+        plt,
         random,
+        sns,
+        split_by_scene,
         torch,
         transform_points,
         trimesh,
@@ -131,7 +125,7 @@ def _(
     LMOConfig,
     LMOLoader,
     backproject_depth,
-    extract_frame_instances_pcs,
+    extract_instances_pcs,
     go,
     np,
     transform_points,
@@ -185,43 +179,50 @@ def _(
         fig.show()
 
 
-
-    # TODO: add pT features, add a flag for 
-    def plot_mesh_instance_visible(loader: LMOLoader, config, scene_id: int, img_id: int, inst_idx: int, feature_data: np.ndarray = None):
-        # Obatin instance mesh
+    def plot_mesh_instance_visible(
+        loader: LMOLoader,
+        config,
+        scene_id: int,
+        img_id: int,
+        inst_idx: int,
+    ):
         instance = loader.load_instances(scene_id, img_id)[inst_idx]
         obj_id = instance.obj_id
-        print(obj_id)
 
         mesh_path = config.paths.model_path(instance.obj_id)
         mesh = trimesh.load(mesh_path)
         posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
         faces = mesh.faces
+
         traces = [
             go.Mesh3d(
-                x=posed_vertices[:,0],
-                y=posed_vertices[:,1],
-                z=posed_vertices[:,2],
-                i=faces[:,0],
-                j=faces[:,1],
-                k=faces[:,2],
-                opacity=.7,
-                name=f'obj : {instance.obj_id} (instance {inst_idx})',
+                x=posed_vertices[:, 0],
+                y=posed_vertices[:, 1],
+                z=posed_vertices[:, 2],
+                i=faces[:, 0],
+                j=faces[:, 1],
+                k=faces[:, 2],
+                opacity=0.7,
+                name=f"obj : {instance.obj_id} (instance {inst_idx})",
                 showlegend=True,
             )
         ]
-        # this will extract all objects in a frame. in case of memory issues, implement instance base extractor.
-        pTr_iterator = extract_frame_instances_pcs(loader, scene_id, img_id, [obj_id])
+
+        pTr_iterator = extract_instances_pcs(loader, scene_id, img_id, [obj_id])
         uid, visib_posed_pcs = next(pTr_iterator)
-        traces.append(go.Scatter3d(
-                x = visib_posed_pcs[:, 0],
-                y = visib_posed_pcs[:, 1],
-                z = visib_posed_pcs[:, 2],
-                mode = "markers",
-                marker=dict(size=2, color="yellow", opacity=.5),
+
+        traces.append(
+            go.Scatter3d(
+                x=visib_posed_pcs[:, 0],
+                y=visib_posed_pcs[:, 1],
+                z=visib_posed_pcs[:, 2],
+                mode="markers",
+                marker=dict(size=2, color="yellow", opacity=0.5),
                 name=f"Visible (instance {inst_idx})",
                 showlegend=True,
-        ))
+            )
+        )
+
         fig = go.Figure(data=traces)
         fig.update_layout(
             title=f"Scene {scene_id} | Frame {img_id} | object {obj_id} | instance {inst_idx}",
@@ -231,6 +232,63 @@ def _(
         fig.show()
 
 
+    def plot_mesh_instance_visible_with_field(
+        loader: LMOLoader,
+        config,
+        scene_id: int,
+        img_id: int,
+        inst_idx: int,
+        points: np.ndarray,
+        symmetry_field: np.ndarray,
+    ):
+        instance = loader.load_instances(scene_id, img_id)[inst_idx]
+        obj_id = instance.obj_id
+
+        mesh_path = config.paths.model_path(instance.obj_id)
+        mesh = trimesh.load(mesh_path)
+        posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
+        faces = mesh.faces
+
+        traces = [
+            go.Mesh3d(
+                x=posed_vertices[:, 0],
+                y=posed_vertices[:, 1],
+                z=posed_vertices[:, 2],
+                i=faces[:, 0],
+                j=faces[:, 1],
+                k=faces[:, 2],
+                opacity=0.7,
+                name=f"obj : {instance.obj_id} (instance {inst_idx})",
+                showlegend=True,
+            )
+        ]
+
+        traces.append(
+            go.Scatter3d(
+                x=points[:, 0],
+                y=points[:, 1],
+                z=points[:, 2],
+                mode="markers",
+                marker=dict(
+                    size=3,
+                    color=symmetry_field,
+                    colorscale="Viridis",
+                    showscale=True,
+                    colorbar=dict(title="Symmetry field"),
+                    opacity=0.8,
+                ),
+                name=f"Visible (instance {inst_idx})",
+                showlegend=True,
+            )
+        )
+
+        fig = go.Figure(data=traces)
+        fig.update_layout(
+            title=f"Scene {scene_id} | Frame {img_id} | object {obj_id} | instance {inst_idx}",
+            height=700,
+            scene=dict(aspectmode="data"),
+        )
+        fig.show()
 
 
     def plot_object_point_cloud(loader: LMOLoader, obj_id: int, features: np.ndarray = None):
@@ -240,19 +298,11 @@ def _(
     def show_instance_segment(loader: LMOLoader, scene_id: int, img_id: int, obj_id: int, inst_idx: int):
         pass
 
-    return plot_frame_meshes_and_sensor, plot_mesh_instance_visible
-
-
-@app.cell
-def _(config, loader, plot_frame_meshes_and_sensor):
-    plot_frame_meshes_and_sensor(loader, config, 2, 47 )
-    return
-
-
-@app.cell
-def _(config, loader, plot_mesh_instance_visible):
-    plot_mesh_instance_visible(loader, config, 2, 47, 2)
-    return
+    return (
+        plot_frame_meshes_and_sensor,
+        plot_mesh_instance_visible,
+        plot_mesh_instance_visible_with_field,
+    )
 
 
 @app.cell(hide_code=True)
@@ -269,39 +319,39 @@ def _(mo):
 
 
 @app.cell
-def _(LMOLoader, SymmetryFieldPointDataset, random):
+def _(
+    LMOLoader,
+    SymmetryFieldMLP,
+    SymmetryFieldPointDataset,
+    n_per_obj,
+    plt,
+    random,
+    rng,
+    sns,
+    torch,
+    uids_by_obj,
+):
+    def exp1_efficient(loader: LMOLoader, points_pt_dir, features_input_di, target_dir):
+        # helper function to reserve some instances (pT pointclouds) for analysis.
+        # returns a set of uids (internal ids generated by the data processing step). 
+        # uses sets for fast lookups with set minus operator. 
+        def reserve_test_uids(
+            dataset: SymmetryFieldPointDataset,
+            loader: LMOLoader,
+            n_per_obj: int = 2,
+            seed: int = 123) -> set[str]:
 
-    # helper function to reserve some instances (pT pointclouds) for analysis.
-    # returns a set of uids (internal ids generated by the data processing step). 
-    # uses sets for fast lookups with set minus operator. 
-    def reserve_test_uids(dataset: SymmetryFieldPointDataset, loader: LMOLoader, n_per_obj: int = 2, seed: int = 123) -> set[str]:
-        rng = random.Random(seed)
-        uids_by_obj: dict[int, list[str]] = {}
-        for uid in dataset.uid_list:
-            _, _, obj_id, _ = loader.parse_instance_uid(uid) # extract obj id
-            uids_by_obj.setdefault(obj_id, []).append(uid) # populate the dictionary with obj_id: []
+            rng = random.Random(seed)
+            uids_by_obj: dict[int, list[str]] = {}
+            for uid in dataset.uid_list:
+                _, _, obj_id, _ = loader.parse_instance_uid(uid) # extract obj id
+                uids_by_obj.setdefault(obj_id, []).append(uid) # populate the dictionary with obj_id: []
 
         test_uids = set()
         for obj_id, uids in uids_by_obj.items():
             test_uids.update(rng.sample(uids, min(n_per_obj, len(uids)))) # populate the set with random uids
         return test_uids
-
-    return (reserve_test_uids,)
-
-
-@app.cell
-def _(
-    FEATURES_INPUT_DIR,
-    POINTS_PT_DIR,
-    SymmetryFieldMLP,
-    SymmetryFieldPointDataset,
-    TARGET_DIR,
-    loader,
-    reserve_test_uids,
-    torch,
-):
-    def exp1_efficient():
-        dataset = SymmetryFieldPointDataset(POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR)
+        dataset = SymmetryFieldPointDataset(points_pt_dir, features_input_di, target_dir)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -371,10 +421,6 @@ def _(
             test_loss = loss_fn(test_pred, test_targets).item()
         print(f"Test loss: {test_loss:.4f}")
 
-        # Plot
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
         sns.lineplot(x=list(range(0, n_epochs, log_every)), y=loss_history)
         plt.title("Loss")
         plt.show()
@@ -383,8 +429,30 @@ def _(
 
 
 @app.cell
-def _(exp1_efficient):
-    exp1_efficient()
+def _(Path):
+    # -- Example configuration
+    ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
+    POINTS_PT_DIR = ROOT / "lmo/cache/points_pT/"
+    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield/training/input/"
+    TARGET_DIR = ROOT/ "lmo/scalarfield/training/target/"
+    return FEATURES_INPUT_DIR, POINTS_PT_DIR, ROOT, TARGET_DIR
+
+
+@app.cell
+def _(config, loader, plot_frame_meshes_and_sensor):
+    plot_frame_meshes_and_sensor(loader, config, 2, 47 )
+    return
+
+
+@app.cell
+def _(config, loader, plot_mesh_instance_visible):
+    plot_mesh_instance_visible(loader, config, 2, 47, 5)
+    return
+
+
+@app.cell
+def _(FEATURES_INPUT_DIR, POINTS_PT_DIR, TARGET_DIR, exp1_efficient, loader):
+    exp1_efficient(loader, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR)
     return
 
 
@@ -403,14 +471,119 @@ def _(mo):
 
 @app.cell
 def _(
-    FEATURES_INPUT_DIR,
-    POINTS_PT_DIR,
+    LMOLoader,
+    SymmetryFieldMLP,
     SymmetryFieldPointDataset,
-    TARGET_DIR,
+    plt,
+    sns,
+    split_by_scene,
+    torch,
 ):
-    def exp_1():
-        dataset = SymmetryFieldPointDataset(POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR)
+    def exp2(loader: LMOLoader, points_pt_dir, features_input_di, target_dir):
 
+        dataset = SymmetryFieldPointDataset(
+            points_pt_dir,
+            features_input_di,
+            target_dir,
+            max_instances=850,
+            test_scenes={2}, # Forces loading of all tests scenes
+            include_all_test=True # forces all test scenes to load,
+        )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Splits (train/val = scenes 10,11 80/20 distribution; test = scene 2)
+        train_uids, val_uids, test_uids = split_by_scene(
+            dataset, test_scenes={2}, val_frac=0.2
+        )
+        print(f"train uids:{len(train_uids)}, " f"val uids:{len(val_uids)}, " f"test uids:{len(test_uids)}"  )
+        # this re distributes train / val / test uids and point clouds + applies normalization with training scenes only
+        dataset.assign_split(train_uids=train_uids, val_uids=val_uids, test_uids=test_uids)
+
+        # Masks (train = 0, val = 1, test = 2)
+        train_mask = dataset.split == 0
+        test_mask = dataset.split == 2
+
+        # Move data to GPU
+        # TODO: looking into options in case VRAM is not sufficient (for now order of 100mb are needed)
+        train_features = dataset.features[train_mask].to(device)
+        train_targets = dataset.targets[train_mask].to(device)
+        test_features = dataset.features[test_mask].to(device)
+        test_targets = dataset.targets[test_mask].to(device)
+
+        # Load model
+        print(train_features.shape[1], train_features.shape[0])
+        model = SymmetryFieldMLP(in_dim=train_features.shape[1]).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        loss_fn = torch.nn.MSELoss()
+
+        # hyper parameters
+        batch_size = 30000
+        n_epochs = 125
+        log_every = 5
+
+        n_train = train_features.shape[0]
+        n_batches = (n_train + batch_size - 1) // batch_size
+
+        loss_history = []
+        for epoch in range(n_epochs):
+            perm = torch.randperm(n_train, device=device)
+            epoch_loss = 0.0
+            for i in range(n_batches):
+                start = i * batch_size
+                end = min(start + batch_size, n_train)
+                perm_mask = perm[start:end]
+                features = train_features[perm_mask]
+                targets = train_targets[perm_mask]
+
+                optimizer.zero_grad()
+                pred = model(features)
+                loss = loss_fn(pred, targets)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            mean_epoch_loss = epoch_loss / n_batches
+            if epoch % log_every == 0:
+                print(f"epoch {epoch}: loss={mean_epoch_loss:.4f}")
+                loss_history.append(mean_epoch_loss)
+
+        model.eval()
+        with torch.no_grad():
+            test_pred = model(test_features)
+            test_loss = loss_fn(test_pred, test_targets).item()
+        print(f"Test loss: {test_loss:.4f}")
+
+
+        sns.lineplot(x=list(range(0, n_epochs, log_every)), y=loss_history)
+        plt.title("Loss")
+        plt.show()
+
+    return (exp2,)
+
+
+@app.cell
+def _(ROOT, config, loader, np, plot_mesh_instance_visible_with_field):
+    # -- Experiment 2
+    POINTS_PT_DIR_FULL = ROOT / "lmo/cache/points_pT/"
+    FEATURES_INPUT_DIR_FULL = ROOT / "lmo/scalarfield_full/training/input/"
+    TARGET_DIR_FULL = ROOT/ "lmo/scalarfield_full/training/target/"
+    scene_id, img_id, obj_id, inst_idx = 10, 0, 10, 0
+    # load file from system
+    symmetry_field_ = np.load(TARGET_DIR_FULL/ (loader.instance_uid(scene_id, img_id, obj_id, inst_idx) + ".npz") )["target"]
+    points_ = np.load(POINTS_PT_DIR_FULL/ (loader.instance_uid(scene_id, img_id, obj_id, inst_idx) + ".npz") )["points"]
+    plot_mesh_instance_visible_with_field(loader, config, scene_id, img_id, inst_idx, points_, symmetry_field_)
+    return FEATURES_INPUT_DIR_FULL, POINTS_PT_DIR_FULL, TARGET_DIR_FULL
+
+
+@app.cell
+def _(
+    FEATURES_INPUT_DIR_FULL,
+    POINTS_PT_DIR_FULL,
+    TARGET_DIR_FULL,
+    exp2,
+    loader,
+):
+    exp2(loader, POINTS_PT_DIR_FULL, FEATURES_INPUT_DIR_FULL, TARGET_DIR_FULL)
     return
 
 
