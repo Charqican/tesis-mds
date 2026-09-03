@@ -12,6 +12,7 @@ from pose6d.features import compute_canonical_symmetry_field
 # TODO: should be in preprocessing
 from pose6d.geometry_utils import propagate_symmetry_to_target
 
+# TODO: Implement symmetry propagation using a complete scene.
 """
 This script extract a symmetry field using canonical object data, then the fiels is
 propagated to an existing partial point cloud using closest neighbour. It is expected 
@@ -22,6 +23,8 @@ Dataset root:
     {data}/lmo
 Partial pointclouds:
     {root}/lmo/cache/points_pT
+Frame pointclouds:
+    {root}/lmo/cache/points_frames
 
 Extracted features:
     {root}/lmo/{experiment_name}/training/target
@@ -42,7 +45,7 @@ def main() -> None:
     canonical_cache: dict[int, tuple] = {}
     args.target.mkdir(parents=True, exist_ok=True)
 
-    pt_files = sorted(args.points_pt.rglob("*.npz"))
+    pt_files = sorted(args.points_pt.rglob(f"scene{args.scene_id:06d}_*.npz"))
     if not pt_files:
         raise FileNotFoundError(f"No partial points found in {args.points_pt}.")
 
@@ -101,6 +104,13 @@ def parse_args() -> argparse.Namespace:
         default="scalarfield",
         help="name given to a subfolder containing the resulting artefacts. Default: scalarfield",
     )
+    p.add_argument(
+        "--scene-id",
+        "-s",
+        type=int,
+        default=2,
+    )
+    # TODO: add mode (pt or frame)
 
     args = p.parse_args()
 
