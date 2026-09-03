@@ -3,7 +3,12 @@ import os
 import argparse
 
 from dotenv import load_dotenv
-from pose6d.preprocessing import extract_scene_instances_pcs, save_pointclouds
+from pose6d.preprocessing import (
+    extract_scene_instances_pcs,
+    extract_scene_frames_pcs,
+    save_frame_pcs,
+    save_instance_pcs,
+)
 from pose6d.config import LMOConfig
 from pose6d.loader import LMOLoader
 
@@ -28,12 +33,25 @@ def main() -> None:
     loader = LMOLoader(config)
 
     target_obj_ids = loader.symmetric_obj_ids()
+    loader.paths.scene_dir
 
-    instances = extract_scene_instances_pcs(
-        loader, args.scene_id, list(target_obj_ids), args.min_visib
-    )
     cache_path = args.root / "lmo" / "cache"
-    saved = save_pointclouds(instances, cache_path / "points_pT")
+
+    saved = []  # for lint
+    if args.mode == "pT":
+        print("Saving pT")
+        instances = extract_scene_instances_pcs(
+            loader, args.scene_id, list(target_obj_ids), args.min_visib
+        )
+        saved = save_instance_pcs(instances, cache_path / "points_pT")
+
+    if args.mode == "frame":
+        print("Saving frames")
+        frames = extract_scene_frames_pcs(
+            loader,
+            args.scene_id,
+        )
+        saved = save_frame_pcs(frames, cache_path / "points_frames")
 
     print(f"Saved {len(saved)} instances.")
 
@@ -44,21 +62,34 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Extract partial pointclouds from scene info + segmentation masks (pT)."
     )
+
     p.add_argument(
         "--dataset",
         "-d",
         type=Path,
         help="Dataset path (fallback: POSE6D_DATASET in .env)",
     )
+
     p.add_argument("--scene-id", "-s", type=int, default=2)
+
     p.add_argument(
         "--root",
         "-r",
         type=Path,
         help="Root directory for saving processed data (fallback: POSE6D_ROOT in .env)",
     )
-    p.add_argument("--min-visib", "-m", type=float, default=0.05)
+
+    p.add_argument("--min-visib", "-v", type=float, default=0.05)
+
     p.add_argument("--experiment-name", "-n", type=str, default="scalarfield")
+
+    p.add_argument(
+        "--mode",
+        "-m",
+        type=str,
+        default="pT",
+        help=f"Modes available are pT and frames.",
+    )
 
     args = p.parse_args()
 
@@ -75,6 +106,9 @@ def parse_args() -> argparse.Namespace:
             args.root = Path(env)
     if args.root is None:
         p.error("Pass --root or set POSE6D_ROOT in .env")
+
+    if args.mode not in ["pT", "frame"]:
+        p.error("mode should be pTr or frame")
 
     return args
 
