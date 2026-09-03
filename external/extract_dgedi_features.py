@@ -59,12 +59,14 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Extract dGeDi features from partial pointclouds (pT)."
     )
+
     p.add_argument(
         "--root",
         "-r",
         type=Path,
-        help="Root directory for processed data (fallback: POSE6D_ROOT in .env). The script will target lmo/cache/points_pT inside root",
+        help="Root directory for processed data (fallback: POSE6D_ROOT in .env). The script will target lmo/cache/inside root",
     )
+
     p.add_argument(
         "--experiment-name",
         "-e",
@@ -72,6 +74,11 @@ def parse_args() -> argparse.Namespace:
         default="scalarfield",
         help="Name of subfolder inside root. the resulting features will be saved in root/lmo/experiment-name/training/input",
     )
+
+    p.add_argument("--scene-id", "-s", type=int, default=10)
+
+    p.add_argument("--batch-size", "-b", type=int, default=None)
+
     args = p.parse_args()
 
     if args.root is None:
@@ -91,6 +98,7 @@ def load_model():
     return dgedi({"query": model_cfg, "target": model_cfg, "device": DEVICE})
 
 
+@torch.no_grad()
 def process_one(npz_path: Path, model, features_dir: Path) -> None:
     data = np.load(npz_path)
     points = data["points"]
@@ -105,34 +113,48 @@ def process_one(npz_path: Path, model, features_dir: Path) -> None:
     features_dir.mkdir(parents=True, exist_ok=True)
     np.savez(features_dir / npz_path.name, features=features.astype(np.float32))
 
+    del pcd, features
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+
 
 def main():
     args = parse_args()
-
     points_pt_dir = args.root / "lmo" / "cache" / "points_pT"
     features_input_dir = args.root / "lmo" / args.experiment_name / "training" / "input"
 
-    print(f"Device: {DEVICE}")
-    model = load_model()
+    all_inputs = sorted(points_pt_dir.rglob(f"scene{args.scene_id:06d}_*.npz"))
+    pending = (
+        [p for p in all_inputs if not (features_input_dir / p.name).exists()]
+        if SKIP_EXISTING
+        else all_inputs
+    )
+    print(f"{len(all_inputs)} total, {len(pending)} pending")
 
-    all_inputs = sorted(points_pt_dir.glob("*.npz"))
-    if SKIP_EXISTING:
-        pending = [p for p in all_inputs if not (features_input_dir / p.name).exists()]
-        print(f"{len(all_inputs)} total, {len(pending)} pending")
-    else:
-        pending = all_inputs
+    batch_size = args.batch_size or len(pending)
+    n_ok, n_failed = 0, 0
 
-    iterator = tqdm(pending, unit="instance") if TQDM_AVAILABLE else pending
+    for batch_start in range(0, len(pending), batch_size):
+        batch = pending[batch_start : batch_start + batch_size]
+        print(f"Batch {batch_start // batch_size + 1}: {len(batch)} instancias")
 
-    n_failed = 0
-    for npz_path in iterator:
-        try:
-            process_one(npz_path, model, features_input_dir)
-        except Exception as e:
-            n_failed += 1
-            print(f"[ERROR] {npz_path.name}: {e}")
+        print(f"Device: {DEVICE}")
+        model = load_model()  # modelo fresco por batch
 
-    print(f"Done. {len(pending) - n_failed} ok, {n_failed} Failed.")
+        iterator = tqdm(batch, unit="instance") if TQDM_AVAILABLE else batch
+        for npz_path in iterator:
+            try:
+                process_one(npz_path, model, features_input_dir)
+                n_ok += 1
+            except Exception as e:
+                n_failed += 1
+                print(f"[ERROR] {npz_path.name}: {e}")
+
+        del model
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
+
+    print(f"Done. {n_ok} ok, {n_failed} failed.")
 
 
 if __name__ == "__main__":
