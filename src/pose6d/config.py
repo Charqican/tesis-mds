@@ -55,11 +55,10 @@ class LMOPath:
             - scene_gt.json
             - scene_gt_info.json
         """
-        try:
-            path = self.root / "test" / f"{scene_id:06d}"
+        path_test = self.root / "test" / f"{scene_id:06d}"
+        path_train = self.root / "train" / f"{scene_id:06d}"
 
-        except FileNotFoundError:
-            path = self.root / "train" / f"{scene_id:06d}"
+        path = path_test if path_test.exists() else path_train
 
         return path
 
