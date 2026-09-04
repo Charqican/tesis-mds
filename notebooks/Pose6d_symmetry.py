@@ -72,18 +72,22 @@ def _():
     from pose6d.geometry_utils import backproject_depth, transform_points
     from pose6d.preprocessing import extract_instances_pcs 
 
-    from pathlib import Path
+
+
+
     import numpy as np
     import matplotlib.pyplot as plt
     import plotly.graph_objects as go
     import seaborn as sns
+    import pandas as pd
     import torch
     import trimesh
     from torch.utils.data import DataLoader, Subset
+    from sklearn.decomposition import PCA
     import json
     import glob
     import random
-
+    from pathlib import Path
     # TODO: Check if data exist in the expected folders, throw an exception if not
     lmo_root = Path("/mnt/data/dev/dataset/tesis/BOP/lmo/lmo")
     config = LMOConfig.from_root(lmo_root) 
@@ -92,6 +96,7 @@ def _():
     return (
         LMOConfig,
         LMOLoader,
+        PCA,
         Path,
         SymmetryFieldMLP,
         SymmetryFieldPointDataset,
@@ -102,6 +107,7 @@ def _():
         loader,
         mo,
         np,
+        pd,
         plt,
         random,
         sns,
@@ -124,6 +130,7 @@ def _(mo):
 def _(
     LMOConfig,
     LMOLoader,
+    PCA,
     backproject_depth,
     extract_instances_pcs,
     go,
@@ -290,25 +297,185 @@ def _(
         )
         fig.show()
 
+    def features_to_rgb(
+        features: np.ndarray,
+        reference: np.ndarray | None = None,
+        percentiles: tuple[float, float] = (2.0, 98.0),
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        features = np.asarray(features, dtype=np.float64)
+        reference = features if reference is None else np.asarray(reference, dtype=np.float64)
 
-    def plot_object_point_cloud(loader: LMOLoader, obj_id: int, features: np.ndarray = None):
-        pass
+        pca = PCA(n_components=3).fit(reference)
+        signs = np.sign(pca.components_[np.arange(3), np.abs(pca.components_).argmax(axis=1)])
+        signs[signs == 0] = 1.0
+        pca.components_ *= signs[:, None]
+
+        low, high = np.percentile(pca.transform(reference), percentiles, axis=0)
+        span = np.where(high - low > 1e-12, high - low, 1.0)
+
+        scaled = (pca.transform(features) - low) / span
+        inside = np.all((scaled >= 0.0) & (scaled <= 1.0), axis=1)
+        rgb = np.clip(scaled, 0.0, 1.0) * 255.0
+        colors = np.array([f"rgb({int(r)},{int(g)},{int(b)})" for r, g, b in rgb])
+
+        return colors, inside, pca.explained_variance_ratio_
 
 
-    def show_instance_segment(loader: LMOLoader, scene_id: int, img_id: int, obj_id: int, inst_idx: int):
-        pass
+    def plot_mesh_instance_with_dgedi_features(
+        loader: LMOLoader,
+        config,
+        scene_id: int,
+        img_id: int,
+        inst_idx: int,
+        points: np.ndarray,
+        features: np.ndarray,
+        reference: np.ndarray | None = None,
+        show_mesh: bool = True,
+    ) -> go.Figure:
+    
+        instance = loader.load_instances(scene_id, img_id)[inst_idx]
+        obj_id = instance.obj_id
+
+        colors, inside, evr = features_to_rgb(features, reference)
+        outside = ~inside
+
+        traces = []
+        if show_mesh:
+            mesh = trimesh.load(config.paths.model_path(obj_id))
+            posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
+            faces = mesh.faces
+            traces.append(
+                go.Mesh3d(
+                    x=posed_vertices[:, 0],
+                    y=posed_vertices[:, 1],
+                    z=posed_vertices[:, 2],
+                    i=faces[:, 0],
+                    j=faces[:, 1],
+                    k=faces[:, 2],
+                    opacity=0.3,
+                    name=f"obj : {obj_id} (instance {inst_idx})",
+                    showlegend=True,
+                )
+            )
+        traces.append(
+            go.Scatter3d(
+                x=points[inside, 0],
+                y=points[inside, 1],
+                z=points[inside, 2],
+                mode="markers",
+                marker=dict(size=3, color=colors[inside].tolist(), opacity=0.9),
+                name=f"dGeDi PCA ({int(inside.sum())} pts)",
+                showlegend=True,
+            )
+        )
+        if outside.any():
+            traces.append(
+                go.Scatter3d(
+                    x=points[outside, 0],
+                    y=points[outside, 1],
+                    z=points[outside, 2],
+                    mode="markers",
+                    marker=dict(size=3, color="rgb(130,130,130)", symbol="x", opacity=0.9),
+                    name=f"fuera de rango ({int(outside.sum())} pts)",
+                    showlegend=True,
+                )
+            )
+
+        evr_text = " | ".join(f"PC{i + 1}: {v:.1%}" for i, v in enumerate(evr))
+
+        fig = go.Figure(data=traces)
+        fig.update_layout(
+            title=(
+                f"Scene {scene_id} | Frame {img_id} | object {obj_id} | instance {inst_idx}"
+                f"<br><sup>RGB = PC1, PC2, PC3 &nbsp;&nbsp; {evr_text}</sup>"
+            ),
+            height=700,
+            scene=dict(aspectmode="data"),
+        )
+        return fig
 
     return (
         plot_frame_meshes_and_sensor,
-        plot_mesh_instance_visible,
         plot_mesh_instance_visible_with_field,
+        plot_mesh_instance_with_dgedi_features,
     )
+
+
+@app.cell
+def _(LMOLoader, np, pd, torch):
+    # Eval funtions
+    @torch.no_grad()
+    def evaluate_split(
+        model: torch.nn.Module,
+        dataset,
+        split: int = 2,
+        device: torch.device | str | None = None,
+        loader: LMOLoader | None = None,
+    ) -> pd.DataFrame:
+        if device is None:
+            device = next(model.parameters()).device
+
+        model.eval()
+        rows = []
+        frame_cache: dict[tuple[int, int], list] = {}
+
+        for idx, uid in enumerate(dataset.uid_list):
+            if int(dataset.split_per_instance[idx]) != split:
+                continue
+
+            _, features, target_raw = dataset.get_instance(uid)
+            pred_norm = model(features.to(device)).reshape(-1).cpu()
+            pred = dataset.denormalize(pred_norm).numpy().astype(np.float64)
+            target = target_raw.numpy().astype(np.float64)
+
+            error = pred - target
+            target_std = target.std()
+            pred_std = pred.std()
+            rmse = float(np.sqrt((error**2).mean()))
+
+            if target_std > 1e-12 and pred_std > 1e-12:
+                pearson = float(np.corrcoef(pred, target)[0, 1])
+            else:
+                pearson = np.nan
+
+            scene_id, img_id, obj_id, inst_idx = LMOLoader.parse_instance_uid_(uid)
+
+            row = {
+                "uid": uid,
+                "scene_id": scene_id,
+                "img_id": img_id,
+                "obj_id": obj_id,
+                "inst_idx": inst_idx,
+                "n_points": len(target),
+                "mse": float((error**2).mean()),
+                "mae": float(np.abs(error).mean()),
+                "rmse": rmse,
+                "rmse_norm": rmse / target_std if target_std > 1e-12 else np.nan,
+                "bias": float(error.mean()),
+                "pearson_r": pearson,
+                "target_mean": float(target.mean()),
+                "target_std": float(target_std),
+                "pred_mean": float(pred.mean()),
+                "pred_std": float(pred_std),
+            }
+
+            if loader is not None:
+                key = (scene_id, img_id)
+                if key not in frame_cache:
+                    frame_cache[key] = loader.load_intances(scene_id, img_id)
+                row["visib_fract"] = frame_cache[key][inst_idx].visible_fract
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Training example - Point wise
+    ## Training example
 
     - Simple 2 layer MLP
     - 256 hidden dimension
@@ -323,13 +490,10 @@ def _(
     LMOLoader,
     SymmetryFieldMLP,
     SymmetryFieldPointDataset,
-    n_per_obj,
     plt,
     random,
-    rng,
     sns,
     torch,
-    uids_by_obj,
 ):
     def exp1_efficient(loader: LMOLoader, points_pt_dir, features_input_di, target_dir):
         # helper function to reserve some instances (pT pointclouds) for analysis.
@@ -347,10 +511,11 @@ def _(
                 _, _, obj_id, _ = loader.parse_instance_uid(uid) # extract obj id
                 uids_by_obj.setdefault(obj_id, []).append(uid) # populate the dictionary with obj_id: []
 
-        test_uids = set()
-        for obj_id, uids in uids_by_obj.items():
-            test_uids.update(rng.sample(uids, min(n_per_obj, len(uids)))) # populate the set with random uids
-        return test_uids
+            test_uids = set()
+            for obj_id, uids in uids_by_obj.items():
+                test_uids.update(rng.sample(uids, min(n_per_obj, len(uids)))) # populate the set with random uids
+            return test_uids
+
         dataset = SymmetryFieldPointDataset(points_pt_dir, features_input_di, target_dir)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -444,10 +609,52 @@ def _(config, loader, plot_frame_meshes_and_sensor):
     return
 
 
-@app.cell
-def _(config, loader, plot_mesh_instance_visible):
-    plot_mesh_instance_visible(loader, config, 2, 47, 5)
-    return
+app._unparsable_cell(
+    r"""
+    plot_mesh_instance_visible(loader, config, 2, 47def plot_loss(train_loss_history, val_loss_history, log: bool = True):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.lineplot(x=range(len(train_loss_history)), y=train_loss_history, label="train", ax=ax)
+        sns.lineplot(x=range(len(val_loss_history)), y=val_loss_history, label="val", ax=ax)
+        if log:
+            ax.set_yscale("log")
+        ax.set(xlabel="epoch", ylabel="loss", title="Curvas de entrenamiento")
+        return fig
+ 
+ 
+    def plot_error_by_object(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.boxplot(data=df, x="obj_id", y=metric, ax=ax, showfliers=False)
+        sns.stripplot(data=df, x="obj_id", y=metric, ax=ax, color="black", size=3, alpha=0.5)
+        ax.set(xlabel="obj_id", ylabel=metric, title=f"{metric} por instancia, agrupado por objeto")
+        return fig
+ 
+ 
+    def plot_error_distribution(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.histplot(data=df, x=metric, hue="obj_id", multiple="layer", bins=30, ax=ax)
+        ax.set(xlabel=metric, ylabel="instancias", title=f"Distribución de {metric}")
+        return fig
+ 
+ 
+    def plot_error_vs_visibility(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.scatterplot(data=df, x="visib_fract", y=metric, hue="obj_id", ax=ax)
+        ax.set(xlabel="fracción visible", ylabel=metric, title=f"{metric} vs visibilidad")
+        return fig
+ 
+ 
+    def plot_pred_vs_target(df):
+        fig, ax = plt.subplots(figsize=(5, 5))
+        sns.scatterplot(data=df, x="target_mean", y="pred_mean", hue="obj_id", ax=ax)
+        lo = min(df["target_mean"].min(), df["pred_mean"].min())
+        hi = max(df["target_mean"].max(), df["pred_mean"].max())
+        ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
+        ax.set(xlabel="target medio", ylabel="predicción media", title="Media por instancia")
+        return fig
+    , 6)
+    """,
+    name="_"
+)
 
 
 @app.cell
@@ -479,34 +686,42 @@ def _(
     split_by_scene,
     torch,
 ):
-    def exp2(loader: LMOLoader, points_pt_dir, features_input_di, target_dir):
-
+    def exp2(
+        loader: LMOLoader, points_pt_dir, features_input_di, target_dir
+    ) -> tuple[SymmetryFieldPointDataset, SymmetryFieldMLP, list[float], list[float]]:
+        TEST_SCENES = [2]
         dataset = SymmetryFieldPointDataset(
-            points_pt_dir,
-            features_input_di,
-            target_dir,
+            points_pt_dir, features_input_di, target_dir,
             max_instances=850,
-            test_scenes={2}, # Forces loading of all tests scenes
-            include_all_test=True # forces all test scenes to load,
+            include_all_test=True,  # forces all test scenes to load
+            test_scenes=TEST_SCENES,
         )
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Splits (train/val = scenes 10,11 80/20 distribution; test = scene 2)
+        # Splits (train/val = remaining scenes, 80/20 distribution; test = TEST_SCENES)
         train_uids, val_uids, test_uids = split_by_scene(
-            dataset, test_scenes={2}, val_frac=0.2
+            dataset, test_scenes=set(TEST_SCENES), val_frac=0.2
         )
-        print(f"train uids:{len(train_uids)}, " f"val uids:{len(val_uids)}, " f"test uids:{len(test_uids)}"  )
-        # this re distributes train / val / test uids and point clouds + applies normalization with training scenes only
+        print(
+            f"train uids:{len(train_uids)}, "
+            f"val uids:{len(val_uids)}, "
+            f"test uids:{len(test_uids)}"
+        )
+
+        # this redistributes train/val/test uids and point clouds + applies
+        # normalization with training scenes only
         dataset.assign_split(train_uids=train_uids, val_uids=val_uids, test_uids=test_uids)
 
         # Masks (train = 0, val = 1, test = 2)
         train_mask = dataset.split == 0
+        val_mask = dataset.split == 1
         test_mask = dataset.split == 2
 
         # Move data to GPU
-        # TODO: looking into options in case VRAM is not sufficient (for now order of 100mb are needed)
         train_features = dataset.features[train_mask].to(device)
         train_targets = dataset.targets[train_mask].to(device)
+        val_features = dataset.features[val_mask].to(device)
+        val_targets = dataset.targets[val_mask].to(device)
         test_features = dataset.features[test_mask].to(device)
         test_targets = dataset.targets[test_mask].to(device)
 
@@ -517,15 +732,18 @@ def _(
         loss_fn = torch.nn.MSELoss()
 
         # hyper parameters
-        batch_size = 30000
+        batch_size = 25000
         n_epochs = 125
         log_every = 5
 
         n_train = train_features.shape[0]
         n_batches = (n_train + batch_size - 1) // batch_size
 
-        loss_history = []
+        train_loss_history = []
+        val_loss_history = []
+
         for epoch in range(n_epochs):
+            model.train()
             perm = torch.randperm(n_train, device=device)
             epoch_loss = 0.0
             for i in range(n_batches):
@@ -543,9 +761,16 @@ def _(
                 epoch_loss += loss.item()
 
             mean_epoch_loss = epoch_loss / n_batches
+
             if epoch % log_every == 0:
-                print(f"epoch {epoch}: loss={mean_epoch_loss:.4f}")
-                loss_history.append(mean_epoch_loss)
+                model.eval()
+                with torch.no_grad():
+                    val_pred = model(val_features)
+                    val_loss = loss_fn(val_pred, val_targets).item()
+
+                print(f"epoch {epoch}: train_loss={mean_epoch_loss:.4f}  val_loss={val_loss:.4f}")
+                train_loss_history.append(mean_epoch_loss)
+                val_loss_history.append(val_loss)
 
         model.eval()
         with torch.no_grad():
@@ -553,10 +778,14 @@ def _(
             test_loss = loss_fn(test_pred, test_targets).item()
         print(f"Test loss: {test_loss:.4f}")
 
-
-        sns.lineplot(x=list(range(0, n_epochs, log_every)), y=loss_history)
+        epochs_logged = list(range(0, n_epochs, log_every))
+        sns.lineplot(x=epochs_logged, y=train_loss_history, label="train")
+        sns.lineplot(x=epochs_logged, y=val_loss_history, label="val")
         plt.title("Loss")
+        plt.legend()
         plt.show()
+
+        return dataset, model, train_loss_history, val_loss_history
 
     return (exp2,)
 
@@ -567,12 +796,43 @@ def _(ROOT, config, loader, np, plot_mesh_instance_visible_with_field):
     POINTS_PT_DIR_FULL = ROOT / "lmo/cache/points_pT/"
     FEATURES_INPUT_DIR_FULL = ROOT / "lmo/scalarfield_full/training/input/"
     TARGET_DIR_FULL = ROOT/ "lmo/scalarfield_full/training/target/"
-    scene_id, img_id, obj_id, inst_idx = 10, 0, 10, 0
+    scene_id, img_id, obj_id, inst_idx = 2, 47, 10, 5
     # load file from system
     symmetry_field_ = np.load(TARGET_DIR_FULL/ (loader.instance_uid(scene_id, img_id, obj_id, inst_idx) + ".npz") )["target"]
     points_ = np.load(POINTS_PT_DIR_FULL/ (loader.instance_uid(scene_id, img_id, obj_id, inst_idx) + ".npz") )["points"]
     plot_mesh_instance_visible_with_field(loader, config, scene_id, img_id, inst_idx, points_, symmetry_field_)
-    return FEATURES_INPUT_DIR_FULL, POINTS_PT_DIR_FULL, TARGET_DIR_FULL
+    return (
+        FEATURES_INPUT_DIR_FULL,
+        POINTS_PT_DIR_FULL,
+        TARGET_DIR_FULL,
+        img_id,
+        inst_idx,
+        obj_id,
+        scene_id,
+    )
+
+
+@app.cell
+def _(
+    FEATURES_INPUT_DIR_FULL,
+    POINTS_PT_DIR_FULL,
+    config,
+    img_id,
+    inst_idx,
+    loader,
+    np,
+    obj_id,
+    plot_mesh_instance_with_dgedi_features,
+    scene_id,
+):
+    uid = loader.instance_uid(scene_id, img_id, obj_id, inst_idx)
+    points_2 = np.load(POINTS_PT_DIR_FULL / (uid + ".npz"))["points"]
+    features_ = np.load(FEATURES_INPUT_DIR_FULL / (uid + ".npz"))["features"]
+
+    plot_mesh_instance_with_dgedi_features(
+        loader, config, scene_id, img_id, inst_idx, points_2, features_
+    )
+    return
 
 
 @app.cell
@@ -583,8 +843,109 @@ def _(
     exp2,
     loader,
 ):
-    exp2(loader, POINTS_PT_DIR_FULL, FEATURES_INPUT_DIR_FULL, TARGET_DIR_FULL)
+    dataset, model, train_loss_history, val_loss_history = exp2(loader, POINTS_PT_DIR_FULL, FEATURES_INPUT_DIR_FULL, TARGET_DIR_FULL)
     return
+
+
+@app.cell
+def _(plt, sns):
+    def plot_loss(train_loss_history, val_loss_history, log: bool = True):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.lineplot(x=range(len(train_loss_history)), y=train_loss_history, label="train", ax=ax)
+        sns.lineplot(x=range(len(val_loss_history)), y=val_loss_history, label="val", ax=ax)
+        if log:
+            ax.set_yscale("log")
+        ax.set(xlabel="epoch", ylabel="loss", title="Curvas de entrenamiento")
+        return fig
+ 
+ 
+    def plot_error_by_object(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.boxplot(data=df, x="obj_id", y=metric, ax=ax, showfliers=False)
+        sns.stripplot(data=df, x="obj_id", y=metric, ax=ax, color="black", size=3, alpha=0.5)
+        ax.set(xlabel="obj_id", ylabel=metric, title=f"{metric} por instancia, agrupado por objeto")
+        return fig
+ 
+ 
+    def plot_error_distribution(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.histplot(data=df, x=metric, hue="obj_id", multiple="layer", bins=30, ax=ax)
+        ax.set(xlabel=metric, ylabel="instancias", title=f"Distribución de {metric}")
+        return fig
+ 
+ 
+    def plot_error_vs_visibility(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.scatterplot(data=df, x="visib_fract", y=metric, hue="obj_id", ax=ax)
+        ax.set(xlabel="fracción visible", ylabel=metric, title=f"{metric} vs visibilidad")
+        return fig
+ 
+ 
+    def plot_pred_vs_target(df):
+        fig, ax = plt.subplots(figsize=(5, 5))
+        sns.scatterplot(data=df, x="target_mean", y="pred_mean", hue="obj_id", ax=ax)
+        lo = min(df["target_mean"].min(), df["pred_mean"].min())
+        hi = max(df["target_mean"].max(), df["pred_mean"].max())
+        ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
+        ax.set(xlabel="target medio", ylabel="predicción media", title="Media por instancia")
+        return fig
+
+
+    return
+
+
+app._unparsable_cell(
+    r"""
+    df = evaluate_split(model, dataset, split=2, loader=loader)
+
+    plot_loss(train_loss_history, val_loss_history)
+    plot_error_by_object(df)
+    plot_error_distribution(df)
+    plot_error_vs_visibility(df)   # requiere haber pasado loader a evaluate_split
+    plot_pred_vs_target(df)def plot_loss(train_loss_history, val_loss_history, log: bool = True):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.lineplot(x=range(len(train_loss_history)), y=train_loss_history, label="train", ax=ax)
+        sns.lineplot(x=range(len(val_loss_history)), y=val_loss_history, label="val", ax=ax)
+        if log:
+            ax.set_yscale("log")
+        ax.set(xlabel="epoch", ylabel="loss", title="Curvas de entrenamiento")
+        return fig
+ 
+ 
+    def plot_error_by_object(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.boxplot(data=df, x="obj_id", y=metric, ax=ax, showfliers=False)
+        sns.stripplot(data=df, x="obj_id", y=metric, ax=ax, color="black", size=3, alpha=0.5)
+        ax.set(xlabel="obj_id", ylabel=metric, title=f"{metric} por instancia, agrupado por objeto")
+        return fig
+ 
+ 
+    def plot_error_distribution(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.histplot(data=df, x=metric, hue="obj_id", multiple="layer", bins=30, ax=ax)
+        ax.set(xlabel=metric, ylabel="instancias", title=f"Distribución de {metric}")
+        return fig
+ 
+ 
+    def plot_error_vs_visibility(df, metric: str = "rmse"):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        sns.scatterplot(data=df, x="visib_fract", y=metric, hue="obj_id", ax=ax)
+        ax.set(xlabel="fracción visible", ylabel=metric, title=f"{metric} vs visibilidad")
+        return fig
+ 
+ 
+    def plot_pred_vs_target(df):
+        fig, ax = plt.subplots(figsize=(5, 5))
+        sns.scatterplot(data=df, x="target_mean", y="pred_mean", hue="obj_id", ax=ax)
+        lo = min(df["target_mean"].min(), df["pred_mean"].min())
+        hi = max(df["target_mean"].max(), df["pred_mean"].max())
+        ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
+        ax.set(xlabel="target medio", ylabel="predicción media", title="Media por instancia")
+        return fig
+
+    """,
+    name="_"
+)
 
 
 if __name__ == "__main__":
