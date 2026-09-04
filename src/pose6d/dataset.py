@@ -15,6 +15,7 @@ pytorch implementation of dataset to be passed to a dataloader to handle batchin
 class SymmetryFieldPointDataset(Dataset):
     """
     This Dataset samples points from the point cloud instances.
+
     """
 
     def __init__(
@@ -34,22 +35,23 @@ class SymmetryFieldPointDataset(Dataset):
         if max_instances is not None and max_instances < len(uids):
             rng = random.Random(seed)
             if include_all_test and test_scenes:
+                test_scene_set = set(test_scenes)
                 test_uids_all = [
                     u
                     for u in uids
-                    if LMOLoader.parse_instance_uid_(u)[0] in set(test_scenes)
+                    if LMOLoader.parse_instance_uid_(u)[0] in test_scene_set
                 ]
                 other_uids = [
                     u
                     for u in uids
-                    if LMOLoader.parse_instance_uid_(u)[0] not in set(test_scenes)
+                    if LMOLoader.parse_instance_uid_(u)[0] not in test_scene_set
                 ]
                 n_remaining = max(0, max_instances - len(test_uids_all))
                 sampled_others = rng.sample(
                     other_uids, min(n_remaining, len(other_uids))
                 )
                 uids = sorted(test_uids_all + sampled_others)
-                print(f"train | val : {len(other_uids)}test: {len(test_uids_all)}")
+                print(f"train | val : {len(other_uids)} test: {len(test_uids_all)}")
             else:
                 uids = sorted(rng.sample(uids, max_instances))
 
@@ -60,17 +62,16 @@ class SymmetryFieldPointDataset(Dataset):
             points_path = points_dir / f"{uid}.npz"
             target_path = target_dir / f"{uid}.npz"
             input_path = input_dir / f"{uid}.npz"
-            # TODO: this requieres a user warning
             if not (
                 points_path.exists() and target_path.exists() and input_path.exists()
             ):
                 raise FileNotFoundError(
-                    f"Missing files for {uid}: points={points_path.exists()}, target={target_path.exists()}, inputs={input_path.exists()}"
+                    f"Missing files for {uid}: points={points_path.exists()}, "
+                    f"target={target_path.exists()}, inputs={input_path.exists()}"
                 )
             points = np.load(points_path)["points"]
             feats = np.load(input_path)["features"]
             target = np.load(target_path)["target"]
-            # Sanity checks
             assert feats.shape[0] == target.shape[0] == points.shape[0], (
                 f"{uid}: features - target - points missalignment:\n"
                 f"- input :{feats.shape[0]}\n"
@@ -84,13 +85,24 @@ class SymmetryFieldPointDataset(Dataset):
             all_instance_idx.append(np.full(n_pts, i))
             self.uid_list.append(uid)
 
-        self.features = torch.from_numpy(np.concatenate(all_features, axis=0)).float()
         self.points = torch.from_numpy(np.concatenate(all_points, axis=0)).float()
         self.instance_idx = torch.from_numpy(
             np.concatenate(all_instance_idx, axis=0)
-        ).long()  # this is an index
+        ).long()
+
+        # Raw versions
+        self.features_raw = torch.from_numpy(
+            np.concatenate(all_features, axis=0)
+        ).float()
         self.targets_raw = torch.from_numpy(np.concatenate(all_targets, axis=0)).float()
-        # WARNING: CHECK THIS LINE
+        self.features = self.features_raw
+        self.targets = self.targets_raw
+
+        self.target_mean = torch.tensor(0.0)
+        self.target_std = torch.tensor(1.0)
+        self.feature_mean = torch.zeros(self.features_raw.shape[1])
+        self.feature_std = torch.ones(self.features_raw.shape[1])
+
         self.split_per_instance = torch.full(
             (len(self.uid_list),), -1, dtype=torch.long
         )
@@ -124,21 +136,31 @@ class SymmetryFieldPointDataset(Dataset):
                 self.split_per_instance[i] = 2
         self.split = self.split_per_instance[self.instance_idx]
         train_mask = self.split == 0
+
         if normalize:
             self.target_mean = self.targets_raw[train_mask].mean()
             self.target_std = self.targets_raw[train_mask].std(unbiased=False)
             self.target_std = torch.clamp(self.target_std, min=1e-6)
             self.targets = (self.targets_raw - self.target_mean) / self.target_std
-            # normalizing features
-            self.feature_mean = self.features[train_mask].mean(dim=0)
-            self.feature_std = self.features[train_mask].std(dim=0, unbiased=False)
-            self.feature_std = torch.clamp(self.feature_std, min=1e-6)
-            self.features = (self.features - self.feature_mean) / self.feature_std
-        else:
-            self.targets = self.targets_raw
 
-    # May be possible to obtain with only the uid assigned to the point in an index vector
+            self.feature_mean = self.features_raw[train_mask].mean(dim=0)
+            self.feature_std = self.features_raw[train_mask].std(dim=0, unbiased=False)
+            self.feature_std = torch.clamp(self.feature_std, min=1e-6)
+            self.features = (self.features_raw - self.feature_mean) / self.feature_std
+        else:
+            self.target_mean = torch.tensor(0.0)
+            self.target_std = torch.tensor(1.0)
+            self.feature_mean = torch.zeros(self.features_raw.shape[1])
+            self.feature_std = torch.ones(self.features_raw.shape[1])
+            self.targets = self.targets_raw
+            self.features = self.features_raw
+
     def get_instance(self, uid: str):
+        """
+        (points, features, target_raw).
+        Warning: `features` are normalized and ready to be consumed by model,
+        `target_raw` are not normalized
+        """
         idx = self.uid_list.index(uid)
         mask = self.instance_idx == idx
         return self.points[mask], self.features[mask], self.targets_raw[mask]
