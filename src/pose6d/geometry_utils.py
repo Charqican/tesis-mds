@@ -1,6 +1,10 @@
+from typing import cast
+
 import numpy as np
 from scipy.spatial import KDTree
-
+from pytorch3d.structures import Meshes
+from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
+import torch
 # Collection of geometric function used by other modules.
 
 
@@ -15,10 +19,6 @@ def backproject_depth(
     depth_scale: float,
     stride: int = 1,
 ) -> np.ndarray:
-    """
-    Retroproyecta un mapa de profundidad 16-bit a nube de puntos 3D (mm).
-    Píxeles con valor 0 (sin lectura) se descartan.
-    """
     H, W = depth_raw.shape
     fx, fy = K[0, 0], K[1, 1]
     cx, cy = K[0, 2], K[1, 2]
@@ -47,10 +47,6 @@ def isolate_object_points(
     K: np.ndarray,
     depth_scale: float,
 ) -> np.ndarray:
-    """
-    Aplica máscara visible al mapa de profundidad y retroproyecta.
-    stride=1 para máxima resolución del objeto.
-    """
     d_obj = depth.copy()
     d_obj[~mask] = 0
     return backproject_depth(d_obj, K, depth_scale, stride=1)
@@ -87,8 +83,18 @@ def propagate_symmetry_to_target(
 def subsample_points(
     points: np.ndarray, max_points: int, seed: int = 123
 ) -> np.ndarray:
-    """Subsampling aleatorio simple, reproducible. Alternativa a FPS -- más
-    barato, y suficiente si no necesitás cobertura geométrica óptima."""
     rng = np.random.default_rng(seed)
     idx = rng.choice(points.shape[0], size=max_points, replace=False)
     return points[idx]
+
+
+def sample_mesh_fps(
+    mesh: Meshes,
+    num_points_dense: int,
+    num_points_fps: int,
+) -> torch.Tensor:
+
+    dense_points = cast(torch.Tensor, sample_points_from_meshes(mesh, num_points_dense))
+    fps_points, _ = sample_farthest_points(dense_points, K=num_points_fps)
+
+    return fps_points.squeeze(0)
