@@ -9,8 +9,11 @@ import torch
 
 
 def transform_points(pts: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
-    """Aplica pose model->camera: X_cam = R @ X + t."""
+    """Applies pose model->camera: X_cam = R @ X + t."""
     return pts @ R.T + t.reshape(1, 3)
+
+
+### Point segmentation
 
 
 def backproject_depth(
@@ -33,23 +36,21 @@ def backproject_depth(
     return np.stack([x, y, z], axis=-1)
 
 
-def nn_residuals(query: np.ndarray, target: np.ndarray) -> np.ndarray:
-    """
-    Para cada punto en query, distancia al vecino más cercano en target.
-    """
-    d, _ = KDTree(target).query(query, k=1)
-    return d
-
-
 def isolate_object_points(
     depth: np.ndarray,
     mask: np.ndarray,
     K: np.ndarray,
     depth_scale: float,
 ) -> np.ndarray:
-    d_obj = depth.copy()
+    d_obj = depth.copy()  # may be unnecesary
     d_obj[~mask] = 0
     return backproject_depth(d_obj, K, depth_scale, stride=1)
+
+
+### Feature propagation
+def nn_residuals(query: np.ndarray, target: np.ndarray) -> np.ndarray:
+    d, _ = KDTree(target).query(query, k=1)
+    return d
 
 
 def knn_propagate(
@@ -80,6 +81,7 @@ def propagate_symmetry_to_target(
     return propagated.reshape(-1)  # just in case!
 
 
+### subsampling
 def subsample_points(
     points: np.ndarray, max_points: int, seed: int = 123
 ) -> np.ndarray:
@@ -98,3 +100,10 @@ def sample_mesh_fps(
     fps_points, _ = sample_farthest_points(dense_points, K=num_points_fps)
 
     return fps_points.squeeze(0)
+
+
+### Outlier removal
+
+
+def remove_outlier_points(pcs: torch.Tensor):
+    pass
