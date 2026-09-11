@@ -113,6 +113,8 @@ class LMOConfig:
     # configuration option for data loader
     depth_stride: int = 2
     mesh_samples: int = 20000
+    # any backprojected pointcloud should have a min viable pointcloud
+    min_points: int = 2048
 
     @classmethod
     def from_root(cls, root: str | Path) -> "LMOConfig":
