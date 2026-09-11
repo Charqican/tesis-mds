@@ -11,6 +11,7 @@ from pose6d.preprocessing import (
 )
 from pose6d.config import LMOConfig
 from pose6d.loader import LMOLoader
+from logger import scripts_extraction_logger as log
 
 """
 This script extract a partial pointcloud using the segmentation mask available on the dataset. 
@@ -39,21 +40,21 @@ def main() -> None:
 
     saved = []  # for lint
     if args.mode == "pT":
-        print("Saving pT")
+        log.info("Saving instances of objects")
         instances = extract_scene_instances_pcs(
             loader, args.scene_id, list(target_obj_ids), args.min_visib
         )
         saved = save_instance_pcs(instances, cache_path / "points_pT")
+        log.info(f"Saved {len(saved)} object instances")
 
     if args.mode == "frame":
-        print("Saving frames")
+        log.info("Saving frame of scenes")
         frames = extract_scene_frames_pcs(
             loader,
             args.scene_id,
         )
         saved = save_frame_pcs(frames, cache_path / "points_frames")
-
-    print(f"Saved {len(saved)} instances.")
+        log.info(f"Saved {len(saved)} scene frames")
 
 
 def parse_args() -> argparse.Namespace:
