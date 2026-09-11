@@ -2,6 +2,7 @@ from pipelines.backprojected_features import extract_features_fm
 from pose6d.loader import SymmetryData
 from pose6d.config import LMOConfig, LMOPath
 from pose6d.loader import LMOLoader
+from pose6d.geometry_utils import sample_mesh_fps
 from model_wrappers import DINOWrapper
 from feature_extractor.config import FeatureConfig
 
@@ -67,7 +68,7 @@ class MeshFeatureExtractor:
     # Sample points using pytorch3d utilities
     def _sample_mesh_points(self, mesh: Meshes, num_samples: int) -> torch.Tensor:
         """Samplea puntos uniformemente sobre la superficie del mesh."""
-        points = sample_points_from_meshes(mesh, num_samples)  # (1, N, 3)
+        points = sample_mesh_fps(mesh, num_samples, num_samples)  # (1, N, 3)
         return points.squeeze(0)  # (N, 3)
 
     # INFO: this function uses abs value!
@@ -89,7 +90,7 @@ class MeshFeatureExtractor:
 # function used by the pT extractor script. It directly uses the MeshFeatureExtractor
 # WARNING: this function is coupled to the LMODataset, but can be easily be decoupled in the future
 def compute_canonical_symmetry_field(
-    config: LMOConfig, loader: LMOLoader, obj_id: int
+    config: LMOConfig, loader: LMOLoader, obj_id: int, n_sample_points=20000
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Helper function that calls MeshFeatureExtractor from this module.
@@ -102,7 +103,8 @@ def compute_canonical_symmetry_field(
         raise ValueError(f"No symmetry plane metadata for obj_id={obj_id}")
 
     mesh_path = config.paths.models_dir / f"obj_{obj_id:06d}.ply"
-    extractor = MeshFeatureExtractor(mesh_path, "distance", config.mesh_samples)
+    # TODO: Change this from a class to a function
+    extractor = MeshFeatureExtractor(mesh_path, "distance", n_sample_points)
     mesh_points, symmetry_scalar = extractor.extract(plane=symmetry_data)
 
     mesh_points = (
