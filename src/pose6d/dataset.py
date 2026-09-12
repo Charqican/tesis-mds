@@ -8,7 +8,7 @@ from logger import pose6d_dataset_logger as log
 
 
 # TODO: Change this to use instance batching as default, lazy loading can be considered for better memory managmente and scalability.
-class SymmetryFieldPointDataset(Dataset):
+class SymmetryFieldInstanceDataset(Dataset):
     """
     Loads from disk input and target pointclouds. At the moment splits are not explicitly separated in disk,
     instead every file has an unique identifier using the metadata asociated (scene id, frame id, obj id, instance id)
@@ -67,9 +67,8 @@ class SymmetryFieldPointDataset(Dataset):
                 expected_k = points.shape[0]
             elif points.shape[0] != expected_k:
                 raise ValueError(
-                    f"{uid}: tiene {points.shape[0]} puntos, se esperaban {expected_k} "
-                    f"(K debe ser fijo entre instancias -- verificar que el subsampling "
-                    f"FPS haya corrido para todas)"
+                    f"{uid}: tiene {points.shape[0]} points, {expected_k} were expected "
+                    f"(K should be the same)"
                 )
 
             all_features.append(feats)
@@ -184,7 +183,7 @@ def select_uids(
 
 
 def split_by_scene(
-    dataset: SymmetryFieldPointDataset,
+    dataset: SymmetryFieldInstanceDataset,
     test_scenes: set[int],
     val_frac: float = 0.2,
     seed: int = 123,
