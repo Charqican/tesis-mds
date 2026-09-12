@@ -19,6 +19,7 @@ from utils import (
     compute_diameter,
 )
 
+# WARNING: instance diameter needs to be revised as its not clear if we should use the complete object
 # INFO: the following code is entirely based on the DEMO script of the original repository
 # TODO: in case of other dataset the subfolder 'lmo' should be changed
 try:
@@ -30,7 +31,7 @@ except ImportError:
 
 # Dgedi Configuration
 CONFIG_PATH = DGEDI_ROOT / "config_dgedi.yaml"
-MODE = "multi_scale"
+MODE = "single_scale"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SKIP_EXISTING = True
 
