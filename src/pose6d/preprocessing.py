@@ -50,14 +50,16 @@ def extract_instances_pcs(
             continue
 
         pts = isolate_object_points(depth, mask, K, depth_scale)
+
         if pts.shape[0] == 0 or (len(pts) < config.sample_points):
+            log.info(f"Skipping instance, n points: {len(pts)}")
             continue
         pts_sampled, _ = sample_farthest_points(
-            torch.from_numpy(pts), K=config.sample_points
+            torch.from_numpy(pts).unsqueeze(0), K=config.sample_points
         )
 
         uid = instance_uid(scene_id, img_id, instance.obj_id, inst_idx)
-        yield uid, pts_sampled.numpy()
+        yield uid, pts_sampled.squeeze(0).numpy()
 
 
 def extract_scene_instances_pcs(
@@ -86,7 +88,7 @@ def save_instance_pcs(
         path = out_dir / f"{uid}.npz"
         np.savez(path, points=pts.astype(np.float32))
         saved.append(path)
-        log.info(f"Saved {pts.shape[0]} points from instance {uid}")
+        # log.info(f"Saved {} points from instance {uid}")
     return saved
 
 
