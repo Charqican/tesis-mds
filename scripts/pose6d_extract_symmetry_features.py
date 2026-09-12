@@ -10,7 +10,7 @@ from pose6d.loader import LMOLoader
 from pose6d.features import compute_canonical_symmetry_field
 
 # TODO: should be in preprocessing
-from pose6d.geometry_utils import propagate_symmetry_to_target
+from pose6d.geometry_utils import propagate_symmetry_to_target, sample_mesh_fps
 
 # TODO: Implement symmetry propagation using a complete scene.
 """
