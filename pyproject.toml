@@ -49,6 +49,9 @@ experiments = [
 test = [
     "pytest>=9.1.0",
 ]
+experiment = [
+    "mlflow>=3.16.0",
+]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 filterwarnings = [
