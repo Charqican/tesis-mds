@@ -71,9 +71,7 @@ def _():
     from pose6d.model import SymmetryFieldMLP
     from pose6d.geometry_utils import backproject_depth, transform_points
     from pose6d.preprocessing import extract_instances_pcs 
-
-
-
+    from logger import notebook_logger as log
 
     import numpy as np
     import matplotlib.pyplot as plt
@@ -107,6 +105,7 @@ def _():
         extract_instances_pcs,
         go,
         loader,
+        log,
         mo,
         np,
         pd,
@@ -120,10 +119,182 @@ def _():
     )
 
 
+@app.cell
+def _(Path, SymmetryFieldMLP, loader):
+    import mlflow
+
+    from experiments.mlflow_wrapper import run_experiment      # ajustá el path si lo dejaste en otro módulo
+    from experiments.experiment_setup import setup_exp1
+    from experiments.experiment_training import training_function
+
+    mlflow.set_tracking_uri("http://localhost:5000")   # el mismo que tuneleaste por ssh
+    mlflow.set_experiment("experiment_1_10")
+
+    ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
+    POINTS_PT_DIR = ROOT / "lmo/cache/points_pT/"
+    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield/training/input/"
+    TARGET_DIR = ROOT/ "lmo/scalarfield/training/target/"
+    base_setup = dict(
+        loader=loader,
+        points_pt_dir=POINTS_PT_DIR,
+        features_input_di=FEATURES_INPUT_DIR,
+        target_dir=TARGET_DIR,
+        sel_obj_id=10,
+        model_cls=SymmetryFieldMLP,
+    )
+
+    return (
+        FEATURES_INPUT_DIR,
+        POINTS_PT_DIR,
+        ROOT,
+        TARGET_DIR,
+        base_setup,
+        mlflow,
+        run_experiment,
+        setup_exp1,
+        training_function,
+    )
+
+
+@app.cell
+def _(base_setup, torch):
+
+
+    configs = [
+        dict(experiment_name="experiment_1_10", run_name="batch_16",
+             setup_conf={**base_setup, "batch_size": 16},
+             train_conf={}),
+
+        dict(experiment_name="experiment_1_10", run_name="batch_32",
+             setup_conf={**base_setup, "batch_size": 32},
+             train_conf={}),
+
+        dict(experiment_name="experiment_1_10", run_name="batch_64",
+             setup_conf={**base_setup, "batch_size": 64},
+             train_conf={}),
+
+        dict(experiment_name="experiment_1_10", run_name="sgd_cosine_b16",
+             setup_conf={**base_setup, "batch_size": 16},
+             train_conf=dict(
+                 optimizer_cls=torch.optim.SGD,
+                 optimizer_kwargs={"lr": 1e-2, "momentum": 0.9},
+                 scheduler_cls=torch.optim.lr_scheduler.CosineAnnealingLR,
+                 scheduler_kwargs={"T_max": 250},
+             )),
+
+        dict(experiment_name="experiment_1_10", run_name="adamw_b16",
+             setup_conf={**base_setup, "batch_size": 16},
+             train_conf=dict(
+                 optimizer_cls=torch.optim.AdamW,
+                 optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
+             )),
+
+    ]
+    return (configs,)
+
+
+@app.cell
+def _(configs, run_experiment, setup_exp1, training_function):
+    results = {}
+
+    for cfg in configs:
+        loss_hist, test_hist, model, dataset = run_experiment(cfg, setup_exp1, training_function)
+        results[cfg["run_name"]] = {
+            "loss_hist": loss_hist,
+            "test_hist": test_hist,
+            "model": model,
+            "dataset": dataset,
+        }
+    return dataset, model
+
+
+@app.cell
+def _(
+    FEATURES_INPUT_DIR,
+    POINTS_PT_DIR,
+    SymmetryFieldMLP,
+    TARGET_DIR,
+    base_setup,
+    loader,
+    mlflow,
+    run_experiment,
+    setup_exp1,
+    torch,
+    training_function,
+):
+    mlflow.set_experiment("experiment_1_11")
+
+    base_setup_11 = dict(
+        loader=loader,
+        points_pt_dir=POINTS_PT_DIR,
+        features_input_di=FEATURES_INPUT_DIR,
+        target_dir=TARGET_DIR,
+        sel_obj_id=11,
+        model_cls=SymmetryFieldMLP,
+    )
+    configs_11 = [
+        dict(experiment_name="experiment_1_11", run_name="batch_16",
+             setup_conf={**base_setup, "batch_size": 16},
+             train_conf={}),
+
+        dict(experiment_name="experiment_1_11", run_name="batch_32",
+             setup_conf={**base_setup, "batch_size": 32},
+             train_conf={}),
+
+        dict(experiment_name="experiment_1_11", run_name="batch_64",
+             setup_conf={**base_setup, "batch_size": 64},
+             train_conf={}),
+
+        dict(experiment_name="experiment_1_11", run_name="sgd_cosine_b16",
+             setup_conf={**base_setup, "batch_size": 16},
+             train_conf=dict(
+                 optimizer_cls=torch.optim.SGD,
+                 optimizer_kwargs={"lr": 1e-2, "momentum": 0.9},
+                 scheduler_cls=torch.optim.lr_scheduler.CosineAnnealingLR,
+                 scheduler_kwargs={"T_max": 250},
+             )),
+
+        dict(experiment_name="experiment_1_11", run_name="adamw_b16",
+             setup_conf={**base_setup, "batch_size": 16},
+             train_conf=dict(
+                 optimizer_cls=torch.optim.AdamW,
+                 optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
+             )),
+
+    ]
+    results_11 = {}
+
+    for cfg_ in configs_11:
+        loss_hist_, test_hist_, model_, dataset_ = run_experiment(cfg_, setup_exp1, training_function)
+        results_11[cfg_["run_name"]] = {
+            "loss_hist": loss_hist_,
+            "test_hist": test_hist_,
+            "model": model_,
+            "dataset": dataset_,
+        }
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ##
+    """)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## Functions
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Visualization
     """)
     return
 
@@ -453,6 +624,14 @@ def _(
     )
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Statistics
+    """)
+    return
+
+
 @app.cell
 def _(LMOLoader, np, pd, torch):
     # Eval funtions
@@ -527,12 +706,7 @@ def _(LMOLoader, np, pd, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Training example
-
-    - Simple 2 layer MLP
-    - 256 hidden dimension
-    - ReLU
-    - random batching
+    ### Experiments
     """)
     return
 
@@ -544,9 +718,34 @@ def _(
     Subset,
     SymmetryFieldInstanceDataset,
     SymmetryFieldMLP,
+    SymmetryFieldPointDataset,
+    log,
+    plt,
     random,
+    sns,
+    split_by_scene,
+    test_loss_history,
     torch,
 ):
+    def reserve_test_uids(
+        dataset: SymmetryFieldInstanceDataset,
+        loader: LMOLoader,
+        sel_obj_id,
+        n_per_obj: int = 2,
+        seed: int = 123,
+        ) -> set[str]:
+        rng = random.Random(seed)
+        uids_by_obj: dict[int, list[str]] = {}
+        for uid in dataset.uid_list:
+            _, _, obj_id, _ = loader.parse_instance_uid(uid) # extract obj id
+            if obj_id != sel_obj_id:
+                continue
+            uids_by_obj.setdefault(obj_id, []).append(uid) # populate the dictionary with obj_id: []
+        test_uids = set()
+        for obj_id, uids in uids_by_obj.items():
+            test_uids.update(rng.sample(uids, min(n_per_obj, len(uids)))) # populate the set with random uids
+        return test_uids
+
     def exp1_efficient(
         loader: LMOLoader,
         points_pt_dir,
@@ -557,41 +756,30 @@ def _(
         scheduler_cls: type | None = None,
         scheduler_kwargs: dict | None = None,
         batch_size: int = 32,
+        sel_obj_id = 10,
+        n_epochs = 5000
+
     ):
-        def reserve_test_uids(
-            dataset: SymmetryFieldInstanceDataset,
-            loader: LMOLoader,
-            n_per_obj: int = 2,
-            seed: int = 123) -> set[str]:
 
-            rng = random.Random(seed)
-            uids_by_obj: dict[int, list[str]] = {}
-            for uid in dataset.uid_list:
-                _, _, obj_id, _ = loader.parse_instance_uid(uid) # extract obj id
-                uids_by_obj.setdefault(obj_id, []).append(uid) # populate the dictionary with obj_id: []
-
-            test_uids = set()
-            for obj_id, uids in uids_by_obj.items():
-                test_uids.update(rng.sample(uids, min(n_per_obj, len(uids)))) # populate the set with random uids
-            return test_uids
-
+        # dataset
         dataset = SymmetryFieldInstanceDataset(points_pt_dir, features_input_di, target_dir)
-
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Splits
+
         test_uids = reserve_test_uids(dataset, loader, n_per_obj=5)
         print(test_uids)
-        train_uids = set(dataset.uid_list) - test_uids
+        obj_target = f"obj{sel_obj_id:06d}"
+        train_uids = set([x for x in dataset.uid_list if obj_target in x]) - test_uids
         dataset.assign_split(train_uids=train_uids, val_uids=set(), test_uids=test_uids)
-
+        log.info(f"Training with {len(train_uids)} instances, Testing with {len(test_uids)} instances.")
         # Masks (train = 0, val = 1, test = 2)
         train_idx = (dataset.split == 0).nonzero(as_tuple=True)[0].tolist()
         test_idx = (dataset.split == 2).nonzero(as_tuple=True)[0].tolist()
 
         # hypr parameters
-        n_epochs = 5000
-        log_every = 50
+        n_epochs = n_epochs
+        log_every = n_epochs // 250
 
         train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size, shuffle=True)
 
@@ -662,7 +850,123 @@ def _(
 
         return n_epochs, loss_history, loss_test_history, model, dataset
 
-    return (exp1_efficient,)
+
+
+    def exp2(
+        loader: LMOLoader, points_pt_dir, features_input_di, target_dir
+    ) -> tuple[SymmetryFieldPointDataset, SymmetryFieldMLP, list[float], list[float]]:
+        TEST_SCENES = [2]
+        dataset = SymmetryFieldPointDataset(
+            points_pt_dir, features_input_di, target_dir,
+            max_instances=850,
+            include_all_test=True,  # forces all test scenes to load
+            test_scenes=TEST_SCENES,
+        )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Splits (train/val = remaining scenes, 80/20 distribution; test = TEST_SCENES)
+        train_uids, val_uids, test_uids = split_by_scene(
+            dataset, test_scenes=set(TEST_SCENES), val_frac=0.2
+        )
+        print(
+            f"train uids:{len(train_uids)}, "
+            f"val uids:{len(val_uids)}, "
+            f"test uids:{len(test_uids)}"
+        )
+
+        # this redistributes train/val/test uids and point clouds + applies
+        # normalization with training scenes only
+        dataset.assign_split(train_uids=train_uids, val_uids=val_uids, test_uids=test_uids)
+
+        # Masks (train = 0, val = 1, test = 2)
+        train_mask = dataset.split == 0
+        val_mask = dataset.split == 1
+        test_mask = dataset.split == 2
+
+        # Move data to GPU
+        train_features = dataset.features[train_mask].to(device)
+        train_targets = dataset.targets[train_mask].to(device)
+        val_features = dataset.features[val_mask].to(device)
+        val_targets = dataset.targets[val_mask].to(device)
+        test_features = dataset.features[test_mask].to(device)
+        test_targets = dataset.targets[test_mask].to(device)
+
+        # Load model
+        print(train_features.shape[1], train_features.shape[0])
+        model = SymmetryFieldMLP(in_dim=train_features.shape[1]).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        loss_fn = torch.nn.MSELoss()
+
+        # hyper parameters
+        batch_size = 25000
+        n_epochs = 125
+        log_every = 5
+
+        n_train = train_features.shape[0]
+        n_batches = (n_train + batch_size - 1) // batch_size
+
+        train_loss_history = []
+        val_loss_history = []
+
+        for epoch in range(n_epochs):
+            model.train()
+            perm = torch.randperm(n_train, device=device)
+            epoch_loss = 0.0
+            for i in range(n_batches):
+                start = i * batch_size
+                end = min(start + batch_size, n_train)
+                perm_mask = perm[start:end]
+                features = train_features[perm_mask]
+                targets = train_targets[perm_mask]
+
+                optimizer.zero_grad()
+                pred = model(features)
+                loss = loss_fn(pred, targets)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            mean_epoch_loss = epoch_loss / n_batches
+
+            if epoch % log_every == 0:
+                model.eval()
+                with torch.no_grad():
+                    val_pred = model(val_features)
+                    val_loss = loss_fn(val_pred, val_targets).item()
+
+                print(f"epoch {epoch}: train_loss={mean_epoch_loss:.4f}  val_loss={val_loss:.4f}")
+                train_loss_history.append(mean_epoch_loss)
+                val_loss_history.append(val_loss)
+
+        model.eval()
+        with torch.no_grad():
+            test_pred = model(test_features)
+            test_loss = loss_fn(test_pred, test_targets).item()
+        print(f"Test loss: {test_loss:.4f}")
+
+        epochs_logged = list(range(0, n_epochs, log_every))
+        sns.lineplot(x=epochs_logged, y=train_loss_history, label="train")
+        sns.lineplot(x=epochs_logged, y=val_loss_history, label="val")
+        plt.title("Loss")
+        plt.legend()
+        plt.show()
+
+        return dataset, model, train_loss_history, val_loss_history, test_loss_history
+
+    return exp1_efficient, exp2
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Training example
+
+    - Simple 2 layer MLP
+    - 256 hidden dimension
+    - ReLU
+    - random batching
+    """)
+    return
 
 
 @app.cell
@@ -814,118 +1118,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    LMOLoader,
-    SymmetryFieldMLP,
-    SymmetryFieldPointDataset,
-    plt,
-    sns,
-    split_by_scene,
-    test_loss_history,
-    torch,
-):
-    def exp2(
-        loader: LMOLoader, points_pt_dir, features_input_di, target_dir
-    ) -> tuple[SymmetryFieldPointDataset, SymmetryFieldMLP, list[float], list[float]]:
-        TEST_SCENES = [2]
-        dataset = SymmetryFieldPointDataset(
-            points_pt_dir, features_input_di, target_dir,
-            max_instances=850,
-            include_all_test=True,  # forces all test scenes to load
-            test_scenes=TEST_SCENES,
-        )
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Splits (train/val = remaining scenes, 80/20 distribution; test = TEST_SCENES)
-        train_uids, val_uids, test_uids = split_by_scene(
-            dataset, test_scenes=set(TEST_SCENES), val_frac=0.2
-        )
-        print(
-            f"train uids:{len(train_uids)}, "
-            f"val uids:{len(val_uids)}, "
-            f"test uids:{len(test_uids)}"
-        )
-
-        # this redistributes train/val/test uids and point clouds + applies
-        # normalization with training scenes only
-        dataset.assign_split(train_uids=train_uids, val_uids=val_uids, test_uids=test_uids)
-
-        # Masks (train = 0, val = 1, test = 2)
-        train_mask = dataset.split == 0
-        val_mask = dataset.split == 1
-        test_mask = dataset.split == 2
-
-        # Move data to GPU
-        train_features = dataset.features[train_mask].to(device)
-        train_targets = dataset.targets[train_mask].to(device)
-        val_features = dataset.features[val_mask].to(device)
-        val_targets = dataset.targets[val_mask].to(device)
-        test_features = dataset.features[test_mask].to(device)
-        test_targets = dataset.targets[test_mask].to(device)
-
-        # Load model
-        print(train_features.shape[1], train_features.shape[0])
-        model = SymmetryFieldMLP(in_dim=train_features.shape[1]).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        loss_fn = torch.nn.MSELoss()
-
-        # hyper parameters
-        batch_size = 25000
-        n_epochs = 125
-        log_every = 5
-
-        n_train = train_features.shape[0]
-        n_batches = (n_train + batch_size - 1) // batch_size
-
-        train_loss_history = []
-        val_loss_history = []
-
-        for epoch in range(n_epochs):
-            model.train()
-            perm = torch.randperm(n_train, device=device)
-            epoch_loss = 0.0
-            for i in range(n_batches):
-                start = i * batch_size
-                end = min(start + batch_size, n_train)
-                perm_mask = perm[start:end]
-                features = train_features[perm_mask]
-                targets = train_targets[perm_mask]
-
-                optimizer.zero_grad()
-                pred = model(features)
-                loss = loss_fn(pred, targets)
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            mean_epoch_loss = epoch_loss / n_batches
-
-            if epoch % log_every == 0:
-                model.eval()
-                with torch.no_grad():
-                    val_pred = model(val_features)
-                    val_loss = loss_fn(val_pred, val_targets).item()
-
-                print(f"epoch {epoch}: train_loss={mean_epoch_loss:.4f}  val_loss={val_loss:.4f}")
-                train_loss_history.append(mean_epoch_loss)
-                val_loss_history.append(val_loss)
-
-        model.eval()
-        with torch.no_grad():
-            test_pred = model(test_features)
-            test_loss = loss_fn(test_pred, test_targets).item()
-        print(f"Test loss: {test_loss:.4f}")
-
-        epochs_logged = list(range(0, n_epochs, log_every))
-        sns.lineplot(x=epochs_logged, y=train_loss_history, label="train")
-        sns.lineplot(x=epochs_logged, y=val_loss_history, label="val")
-        plt.title("Loss")
-        plt.legend()
-        plt.show()
-
-        return dataset, model, train_loss_history, val_loss_history, test_loss_history
-
-    return (exp2,)
+def _():
+    return
 
 
 @app.cell
@@ -1006,6 +1200,29 @@ def _(
     plot_error_distribution(df)
     plot_error_vs_visibility(df)   # requiere haber pasado loader a evaluate_split
     plot_pred_vs_target(df)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## MlFlow examples
+    """)
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
     return
 
 
