@@ -141,12 +141,6 @@ class SymmetryFieldInstanceDataset(Dataset):
             self.features = self.features_raw
 
     def get_instance(self, uid: str):
-        """
-        (points, features, target_raw) de UNA instancia.
-        Warning: `features` viene normalizada (lista para el modelo);
-        `target_raw` viene SIN normalizar -- denormalizar la predicción
-        del modelo con `denormalize` antes de comparar contra este target.
-        """
         idx = self.uid_list.index(uid)
         return self.points[idx], self.features[idx], self.targets_raw[idx]
 
