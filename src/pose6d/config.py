@@ -6,71 +6,28 @@ import os
 # Self Contained configurations & paths class.
 
 
-# dataclass to decouple path access to other implementations. This uses the lmo-bop structure, but a different one can be implemented.
 @dataclass(frozen=True)
-class LMOPath:
+class BOPPath:
     """
-    Path resolver dataclass. Used internally by loader.
-    Expected file structure lmo/
-    - models/
-    - models_eval/
-    - test/
-    - train/
-    - camera.json
-    - test_targets_bop19.sjon
+    Path resolver template class. Expects the followint scene structure
+    - depth/
+    - mask/
+    - mask_visib/
+    - rgb/
+    - scene_camera.json
+    - scene_gt.json
+    - scene_gt_info.json
     """
 
-    root: Path
-
-    # point to folder containing .obj objects
-    @property
-    def models_dir(self) -> Path:
-        """
-        Expected file structure:
-        models/
-        - models_info.json
-        - obj_0000xx.json
-        """
-        return self.root / "models"
-
-    # return models/models_info.json
-    @property
-    def models_info(self) -> Path:
-        return self.models_dir / "models_info.json"
-
-    def model_path(self, obj_id: int):
-        return self.models_dir / f"obj_{obj_id:06d}.ply"
-
-    # points to a scene in train or split using the scene_id
     def scene_dir(self, scene_id: int) -> Path:
-        """
-        Expected structure
-        split/
-        - scene_id/
-            - depth/
-            - mask/
-            - mask_visib/
-            - rgb/
-            - scene_camera.json
-            - scene_gt.json
-            - scene_gt_info.json
-        """
-        path_test = self.root / "test" / f"{scene_id:06d}"
-        path_train = self.root / "train" / f"{scene_id:06d}"
+        raise NotImplementedError
 
-        path = path_test if path_test.exists() else path_train
-
-        return path
-
-    #  points to the rgb images of a scene
     def rgb_path(self, scene_id: int, img_id: int) -> Path:
         return self.scene_dir(scene_id) / "rgb" / f"{img_id:06d}.png"
 
-    # points to the depth images of a scene
     def depth_path(self, scene_id: int, img_id: int) -> Path:
         return self.scene_dir(scene_id) / "depth" / f"{img_id:06d}.png"
 
-    # gets a mask using the img_id and the 'instance_id', the latter refering to the order in which it appers in the corresponding scene_gt.json line
     def mask_visible_path(self, scene_id: int, img_id: int, instance_id: int) -> Path:
         return (
             self.scene_dir(scene_id)
@@ -87,7 +44,39 @@ class LMOPath:
     def scene_gt_info_path(self, scene_id: int) -> Path:
         return self.scene_dir(scene_id) / "scene_gt_info.json"
 
-    # setup for this dataclass using .env file. It searchs for a LMO_ROOT key
+
+@dataclass(frozen=True)
+class LMOPath(BOPPath):
+    """
+    Expected file structure lmo/
+    - models/
+    - models_eval/
+    - test/
+    - train/
+    - camera.json
+    - test_targets_bop19.sjon
+
+    test & train are BOP scenes.
+    """
+
+    root: Path
+
+    @property
+    def models_dir(self) -> Path:
+        return self.root / "models"
+
+    @property
+    def models_info(self) -> Path:
+        return self.models_dir / "models_info.json"
+
+    def model_path(self, obj_id: int) -> Path:
+        return self.models_dir / f"obj_{obj_id:06d}.ply"
+
+    def scene_dir(self, scene_id: int) -> Path:
+        path_test = self.root / "test" / f"{scene_id:06d}"
+        path_train = self.root / "train" / f"{scene_id:06d}"
+        return path_test if path_test.exists() else path_train
+
     @classmethod
     def from_env(cls, env_var: str = "LMO_ROOT") -> "LMOPath":
         root = os.environ.get(env_var)
@@ -95,10 +84,34 @@ class LMOPath:
             raise ValueError(f"Environment variable {env_var} not set")
         return cls(root=Path(root))
 
-    # setup for this dataclass using a path to the lmo dataset
     @classmethod
     def from_root(cls, root: str | Path) -> "LMOPath":
         return cls(root=Path(root))
+
+
+@dataclass(frozen=True)
+class PBRPath(BOPPath):
+    """
+    root/
+        - scene_xxxx1
+        - scene_xxxx2
+        - ...
+    model_root/
+        - models/
+    """
+
+    root: Path
+    model_root: Path
+
+    def scene_dir(self, scene_id: int) -> Path:
+        return self.root / f"scene_{scene_id:06d}"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.model_root / "models"
+
+    def model_path(self, obj_id: int) -> Path:
+        return self.models_dir / f"obj_{obj_id:06d}.ply"
 
 
 # TODO: configuration should be decoupled from path model. we should abstrct LMOPath (eg. PathResolver) to make future dataset implementations easier
