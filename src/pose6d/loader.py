@@ -57,6 +57,18 @@ class ModelInfo:
     symmetries_discrete: list[np.ndarray] | None  # cada uno (4,4), o None
 
 
+class BOPLoader:
+    """
+    General class that expects
+    """
+
+    pass
+
+
+class PBRLoader(BOPLoader):
+    pass
+
+
 # WARNING: in case of multiple symmetries only one is returned
 class LMOLoader:
     """
