@@ -91,15 +91,23 @@ def _():
     config = LMOConfig.from_root(lmo_root) 
     loader= LMOLoader(config) # uses only the 
     print_summary_table(_dataset_summary(loader, 2))
+
+    ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
+    POINTS_PT_DIR = ROOT / "lmo/cache/points_pT/"
+    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield/training/input/"
+    TARGET_DIR = ROOT/ "lmo/scalarfield/training/target/"
     return (
         DataLoader,
+        FEATURES_INPUT_DIR,
         LMOConfig,
         LMOLoader,
         PCA,
-        Path,
+        POINTS_PT_DIR,
+        ROOT,
         Subset,
         SymmetryFieldInstanceDataset,
         SymmetryFieldMLP,
+        TARGET_DIR,
         backproject_depth,
         config,
         extract_instances_pcs,
@@ -112,15 +120,22 @@ def _():
         plt,
         random,
         sns,
-        split_by_scene,
         torch,
         transform_points,
         trimesh,
     )
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## MlFlow examples
+    """)
+    return
+
+
 @app.cell
-def _(Path, SymmetryFieldMLP, loader):
+def _(FEATURES_INPUT_DIR, POINTS_PT_DIR, SymmetryFieldMLP, TARGET_DIR, loader):
     import mlflow
 
     from experiments.mlflow_wrapper import run_experiment      # ajustá el path si lo dejaste en otro módulo
@@ -130,10 +145,7 @@ def _(Path, SymmetryFieldMLP, loader):
     mlflow.set_tracking_uri("http://localhost:5000")   # el mismo que tuneleaste por ssh
     mlflow.set_experiment("experiment_1_10")
 
-    ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
-    POINTS_PT_DIR = ROOT / "lmo/cache/points_pT/"
-    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield/training/input/"
-    TARGET_DIR = ROOT/ "lmo/scalarfield/training/target/"
+
     base_setup = dict(
         loader=loader,
         points_pt_dir=POINTS_PT_DIR,
@@ -142,18 +154,7 @@ def _(Path, SymmetryFieldMLP, loader):
         sel_obj_id=10,
         model_cls=SymmetryFieldMLP,
     )
-
-    return (
-        FEATURES_INPUT_DIR,
-        POINTS_PT_DIR,
-        ROOT,
-        TARGET_DIR,
-        base_setup,
-        mlflow,
-        run_experiment,
-        setup_exp1,
-        training_function,
-    )
+    return base_setup, mlflow, run_experiment, setup_exp1, training_function
 
 
 @app.cell
@@ -323,7 +324,7 @@ def _(
             go.Scatter3d(
                 x=frame_point_cloud[:, 0],
                 y=frame_point_cloud[:, 1],
-                z=frame_point_cloud[:, 2],
+                z=-frame_point_cloud[:, 2],
                 mode="markers",
                 marker=dict(size=1, color="gray", opacity=0.3),
                 name="sensor",
@@ -342,7 +343,7 @@ def _(
                 go.Mesh3d(
                     x=posed_vertices[:, 0],
                     y=posed_vertices[:, 1],
-                    z=posed_vertices[:, 2],
+                    z=-posed_vertices[:, 2],
                     i=faces[:, 0],
                     j=faces[:, 1],
                     k=faces[:, 2],
@@ -380,7 +381,7 @@ def _(
             go.Mesh3d(
                 x=posed_vertices[:, 0],
                 y=posed_vertices[:, 1],
-                z=posed_vertices[:, 2],
+                z=-posed_vertices[:, 2],
                 i=faces[:, 0],
                 j=faces[:, 1],
                 k=faces[:, 2],
@@ -397,7 +398,7 @@ def _(
             go.Scatter3d(
                 x=visib_posed_pcs[:, 0],
                 y=visib_posed_pcs[:, 1],
-                z=visib_posed_pcs[:, 2],
+                z=-visib_posed_pcs[:, 2],
                 mode="markers",
                 marker=dict(size=2, color="yellow", opacity=0.5),
                 name=f"Visible (instance {inst_idx})",
@@ -435,7 +436,7 @@ def _(
             go.Mesh3d(
                 x=posed_vertices[:, 0],
                 y=posed_vertices[:, 1],
-                z=posed_vertices[:, 2],
+                z=-posed_vertices[:, 2],
                 i=faces[:, 0],
                 j=faces[:, 1],
                 k=faces[:, 2],
@@ -450,7 +451,7 @@ def _(
             go.Scatter3d(
                 x=points[:, 0],
                 y=points[:, 1],
-                z=points[:, 2],
+                z=-points[:, 2],
                 mode="markers",
                 marker=dict(
                     size=3,
@@ -525,7 +526,7 @@ def _(
                 go.Mesh3d(
                     x=posed_vertices[:, 0],
                     y=posed_vertices[:, 1],
-                    z=posed_vertices[:, 2],
+                    z=-posed_vertices[:, 2],
                     i=faces[:, 0],
                     j=faces[:, 1],
                     k=faces[:, 2],
@@ -538,7 +539,7 @@ def _(
             go.Scatter3d(
                 x=points[inside, 0],
                 y=points[inside, 1],
-                z=points[inside, 2],
+                z=-points[inside, 2],
                 mode="markers",
                 marker=dict(size=3, color=colors[inside].tolist(), opacity=0.9),
                 name=f"dGeDi PCA ({int(inside.sum())} pts)",
@@ -550,7 +551,7 @@ def _(
                 go.Scatter3d(
                     x=points[outside, 0],
                     y=points[outside, 1],
-                    z=points[outside, 2],
+                    z=-points[outside, 2],
                     mode="markers",
                     marker=dict(size=3, color="rgb(130,130,130)", symbol="x", opacity=0.9),
                     name=f"fuera de rango ({int(outside.sum())} pts)",
@@ -570,6 +571,24 @@ def _(
             scene=dict(aspectmode="data"),
         )
         return fig
+
+    # -- OUTLIER VISUALITAZION FUNCTION
+    def plot_pcd_outlier_mask(pcd, outlier_mask, uid):
+        # -- Visualization
+        fig = go.Figure(data=[
+            go.Scatter3d(
+                x=pcd[~outlier_mask, 0], y=pcd[~outlier_mask, 1], z=-pcd[~outlier_mask, 2],
+                mode="markers", marker=dict(size=2, color="steelblue"),
+                name="inliers",
+            ),
+            go.Scatter3d(
+                x=pcd[outlier_mask, 0], y=pcd[outlier_mask, 1], z=-pcd[outlier_mask, 2],
+                mode="markers", marker=dict(size=4, color="red"),
+                name="Detected Outliers",
+            ),
+        ])
+        fig.update_layout(title=f"{uid} — statistical outlier removal", height=700, scene=dict(aspectmode="data"))
+        fig.show()
 
 
     def plot_loss(train_loss_history, val_loss_history, log: bool = True):
@@ -620,6 +639,7 @@ def _(
         plot_loss,
         plot_mesh_instance_visible_with_field,
         plot_mesh_instance_with_dgedi_features,
+        plot_pcd_outlier_mask,
         plot_pred_vs_target,
     )
 
@@ -712,19 +732,197 @@ def _(mo):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Features Visualization
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Using 32 dimensions for dGedi features
+    """)
+    return
+
+
+@app.cell
+def _(FEATURES_INPUT_DIR, POINTS_PT_DIR, TARGET_DIR, loader, np):
+    # -- Loading pointclouds & features
+    example_uid = "scene000002_img000003_obj000010_inst05"
+    example_uid_file = example_uid+".npz"
+    scene_id, img_id, obj_id, inst_idx = loader.parse_instance_uid(example_uid)
+    test = np.load(POINTS_PT_DIR / example_uid_file)['points']
+    symmetry_field_1 = np.load(TARGET_DIR/ example_uid_file)["target"]
+    features_dgedi = np.load(FEATURES_INPUT_DIR / example_uid_file)["features"]
+    return (
+        example_uid,
+        example_uid_file,
+        features_dgedi,
+        img_id,
+        inst_idx,
+        scene_id,
+        symmetry_field_1,
+        test,
+    )
+
+
+@app.cell
+def _(
+    config,
+    img_id,
+    inst_idx,
+    loader,
+    plot_mesh_instance_visible_with_field,
+    scene_id,
+    symmetry_field_1,
+    test,
+):
+    plot_mesh_instance_visible_with_field(loader, config, scene_id, img_id, inst_idx, test, symmetry_field_1)
+    return
+
+
+@app.cell
+def _(
+    config,
+    features_dgedi,
+    img_id,
+    inst_idx,
+    loader,
+    plot_mesh_instance_with_dgedi_features,
+    scene_id,
+    test,
+):
+    plot_mesh_instance_with_dgedi_features(
+        loader, config, scene_id, img_id, inst_idx, test, features_dgedi, percentiles=(1.0, 100.0)
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Outlier Removal - Geometric statistics
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    import open3d as o3d
+    # -- Marimo Sliders
+    nb_neighbors_slider = mo.ui.slider(start=5, stop=50, step=1, value=20, label="nb_neighbors")
+    std_ratio_slider = mo.ui.slider(start=0.5, stop=5.0, step=0.1, value=2.0, label="std_ratio")
+    mo.hstack([nb_neighbors_slider, std_ratio_slider])
+    return nb_neighbors_slider, o3d, std_ratio_slider
+
+
+@app.cell
+def _(
+    example_uid,
+    nb_neighbors_slider,
+    np,
+    o3d,
+    plot_pcd_outlier_mask,
+    std_ratio_slider,
+    test,
+):
+    # -- Pointcloud statistical removal
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(test)
+
+    pcd_clean, ind = pcd.remove_statistical_outlier(
+        nb_neighbors=nb_neighbors_slider.value,
+        std_ratio=std_ratio_slider.value
+    )
+    ind_idx = np.asarray(ind)
+    outlier_mask = np.ones(test.shape[0], dtype=bool)
+    outlier_mask[ind_idx] = False
+    print(f"Removing {outlier_mask.sum()} points. Ratio: {outlier_mask.sum() / test.shape[0]}")
+    plot_pcd_outlier_mask(test, outlier_mask, example_uid)
+    return
+
+
+@app.cell
+def _(ROOT, example_uid_file, np):
+    # Loading removed version
+
+    POINTS_PT_DIR_RM = ROOT / "lmo/cache/rm_outliers_20_2/points_pT/"
+    FEATURES_INPUT_DIR_RM = ROOT / "lmo/scalarfield_rm/training/input/"
+    TARGET_DIR_RM = ROOT/ "lmo/scalarfield_rm/training/target/"
+    test_rm = np.load(POINTS_PT_DIR_RM / example_uid_file)['points']
+    symmetry_field_rm = np.load(TARGET_DIR_RM/ example_uid_file)["target"]
+    features_dgedi_rm = np.load(FEATURES_INPUT_DIR_RM / example_uid_file)["features"]
+    return (
+        FEATURES_INPUT_DIR_RM,
+        POINTS_PT_DIR_RM,
+        TARGET_DIR_RM,
+        features_dgedi_rm,
+        symmetry_field_rm,
+        test_rm,
+    )
+
+
+@app.cell
+def _(
+    config,
+    img_id,
+    inst_idx,
+    loader,
+    plot_mesh_instance_visible_with_field,
+    scene_id,
+    symmetry_field_rm,
+    test_rm,
+):
+    plot_mesh_instance_visible_with_field(loader, config, scene_id, img_id, inst_idx, test_rm, symmetry_field_rm)
+    return
+
+
+@app.cell
+def _(
+    config,
+    features_dgedi_rm,
+    img_id,
+    inst_idx,
+    loader,
+    plot_mesh_instance_with_dgedi_features,
+    scene_id,
+    test_rm,
+):
+    plot_mesh_instance_with_dgedi_features(
+        loader, config, scene_id, img_id, inst_idx, test_rm, features_dgedi_rm, percentiles=(1.0, 100.0)
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Training example
+
+    - Simple 2 layer MLP
+    - 256 hidden dimension
+    - ReLU
+    - random batching
+    """)
+    return
+
+
+@app.cell
 def _(
     DataLoader,
     LMOLoader,
     Subset,
     SymmetryFieldInstanceDataset,
     SymmetryFieldMLP,
-    SymmetryFieldPointDataset,
     log,
-    plt,
     random,
-    sns,
-    split_by_scene,
-    test_loss_history,
     torch,
 ):
     def reserve_test_uids(
@@ -738,7 +936,7 @@ def _(
         uids_by_obj: dict[int, list[str]] = {}
         for uid in dataset.uid_list:
             _, _, obj_id, _ = loader.parse_instance_uid(uid) # extract obj id
-            if obj_id != sel_obj_id:
+            if obj_id != sel_obj_id and obj_id not in sel_obj_id:
                 continue
             uids_by_obj.setdefault(obj_id, []).append(uid) # populate the dictionary with obj_id: []
         test_uids = set()
@@ -767,7 +965,7 @@ def _(
 
         # Splits
 
-        test_uids = reserve_test_uids(dataset, loader, n_per_obj=5)
+        test_uids = reserve_test_uids(dataset, loader,[10,11], n_per_obj=5)
         print(test_uids)
         obj_target = f"obj{sel_obj_id:06d}"
         train_uids = set([x for x in dataset.uid_list if obj_target in x]) - test_uids
@@ -785,7 +983,7 @@ def _(
 
         # Load model
         feature_dim = dataset.features.shape[-1]
-        model = SymmetryFieldMLP(in_dim=feature_dim).to(device)
+        model = SymmetryFieldMLP(in_dim=feature_dim, hidden_dim=128).to(device)
 
         optimizer_kwargs = optimizer_kwargs or {}
         optimizer = optimizer_cls(model.parameters(), **optimizer_kwargs)
@@ -851,173 +1049,26 @@ def _(
         return n_epochs, loss_history, loss_test_history, model, dataset
 
 
-
-    def exp2(
-        loader: LMOLoader, points_pt_dir, features_input_di, target_dir
-    ) -> tuple[SymmetryFieldPointDataset, SymmetryFieldMLP, list[float], list[float]]:
-        TEST_SCENES = [2]
-        dataset = SymmetryFieldPointDataset(
-            points_pt_dir, features_input_di, target_dir,
-            max_instances=850,
-            include_all_test=True,  # forces all test scenes to load
-            test_scenes=TEST_SCENES,
-        )
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Splits (train/val = remaining scenes, 80/20 distribution; test = TEST_SCENES)
-        train_uids, val_uids, test_uids = split_by_scene(
-            dataset, test_scenes=set(TEST_SCENES), val_frac=0.2
-        )
-        print(
-            f"train uids:{len(train_uids)}, "
-            f"val uids:{len(val_uids)}, "
-            f"test uids:{len(test_uids)}"
-        )
-
-        # this redistributes train/val/test uids and point clouds + applies
-        # normalization with training scenes only
-        dataset.assign_split(train_uids=train_uids, val_uids=val_uids, test_uids=test_uids)
-
-        # Masks (train = 0, val = 1, test = 2)
-        train_mask = dataset.split == 0
-        val_mask = dataset.split == 1
-        test_mask = dataset.split == 2
-
-        # Move data to GPU
-        train_features = dataset.features[train_mask].to(device)
-        train_targets = dataset.targets[train_mask].to(device)
-        val_features = dataset.features[val_mask].to(device)
-        val_targets = dataset.targets[val_mask].to(device)
-        test_features = dataset.features[test_mask].to(device)
-        test_targets = dataset.targets[test_mask].to(device)
-
-        # Load model
-        print(train_features.shape[1], train_features.shape[0])
-        model = SymmetryFieldMLP(in_dim=train_features.shape[1]).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        loss_fn = torch.nn.MSELoss()
-
-        # hyper parameters
-        batch_size = 25000
-        n_epochs = 125
-        log_every = 5
-
-        n_train = train_features.shape[0]
-        n_batches = (n_train + batch_size - 1) // batch_size
-
-        train_loss_history = []
-        val_loss_history = []
-
-        for epoch in range(n_epochs):
-            model.train()
-            perm = torch.randperm(n_train, device=device)
-            epoch_loss = 0.0
-            for i in range(n_batches):
-                start = i * batch_size
-                end = min(start + batch_size, n_train)
-                perm_mask = perm[start:end]
-                features = train_features[perm_mask]
-                targets = train_targets[perm_mask]
-
-                optimizer.zero_grad()
-                pred = model(features)
-                loss = loss_fn(pred, targets)
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            mean_epoch_loss = epoch_loss / n_batches
-
-            if epoch % log_every == 0:
-                model.eval()
-                with torch.no_grad():
-                    val_pred = model(val_features)
-                    val_loss = loss_fn(val_pred, val_targets).item()
-
-                print(f"epoch {epoch}: train_loss={mean_epoch_loss:.4f}  val_loss={val_loss:.4f}")
-                train_loss_history.append(mean_epoch_loss)
-                val_loss_history.append(val_loss)
-
-        model.eval()
-        with torch.no_grad():
-            test_pred = model(test_features)
-            test_loss = loss_fn(test_pred, test_targets).item()
-        print(f"Test loss: {test_loss:.4f}")
-
-        epochs_logged = list(range(0, n_epochs, log_every))
-        sns.lineplot(x=epochs_logged, y=train_loss_history, label="train")
-        sns.lineplot(x=epochs_logged, y=val_loss_history, label="val")
-        plt.title("Loss")
-        plt.legend()
-        plt.show()
-
-        return dataset, model, train_loss_history, val_loss_history, test_loss_history
-
-    return exp1_efficient, exp2
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Training example
-
-    - Simple 2 layer MLP
-    - 256 hidden dimension
-    - ReLU
-    - random batching
-    """)
-    return
-
-
-@app.cell
-def _(Path, config, loader, np, plot_mesh_instance_visible_with_field):
-    # -- Example configuration
-    ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
-    POINTS_PT_DIR = ROOT / "lmo/cache/points_pT/"
-    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield/training/input/"
-    TARGET_DIR = ROOT/ "lmo/scalarfield/training/target/"
-
-    test = np.load("/mnt/data/dev/dataset/tesis/6dpose/lmo/cache/points_pT/scene000002_img000003_obj000010_inst05.npz")['points']
-    symmetry_field_1 = np.load(TARGET_DIR/ (loader.instance_uid(2, 3, 10, 5) + ".npz") )["target"]
-    plot_mesh_instance_visible_with_field(loader, config, 2, 3, 5, test, symmetry_field_1)
-    print(test.size)
-    return FEATURES_INPUT_DIR, POINTS_PT_DIR, ROOT, TARGET_DIR, test
+    return (exp1_efficient,)
 
 
 @app.cell
 def _(
-    FEATURES_INPUT_DIR,
-    config,
-    loader,
-    np,
-    plot_mesh_instance_with_dgedi_features,
-    test,
-):
-    features_dgedi = np.load(FEATURES_INPUT_DIR / ("scene000002_img000003_obj000010_inst05" + ".npz"))["features"]
-
-    plot_mesh_instance_with_dgedi_features(
-        loader, config, 2, 3, 5, test, features_dgedi, percentiles=(1.0, 99.0)
-    )
-    return
-
-
-@app.cell
-def _(
-    FEATURES_INPUT_DIR,
-    POINTS_PT_DIR,
-    TARGET_DIR,
+    FEATURES_INPUT_DIR_RM,
+    POINTS_PT_DIR_RM,
+    TARGET_DIR_RM,
     exp1_efficient,
     loader,
     torch,
 ):
     # batches
-    x_1, y_1, yt_1, model_1, dataset_exp1 = exp1_efficient(loader, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR, batch_size=16)
-    x_2, y_2,yt_2, model_2, _ = exp1_efficient(loader, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR, batch_size=32)
-    x_3, y_3,yt_3, model_3, _ = exp1_efficient(loader, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR, batch_size=64)
+    x_1, y_1, yt_1, model_1, dataset_exp1 = exp1_efficient(loader, POINTS_PT_DIR_RM, FEATURES_INPUT_DIR_RM, TARGET_DIR_RM, batch_size=16)
+    x_2, y_2,yt_2, model_2, _ = exp1_efficient(loader, POINTS_PT_DIR_RM, FEATURES_INPUT_DIR_RM, TARGET_DIR_RM, batch_size=32)
+    x_3, y_3,yt_3, model_3, _ = exp1_efficient(loader, POINTS_PT_DIR_RM, FEATURES_INPUT_DIR_RM, TARGET_DIR_RM, batch_size=64)
 
     # optimizer + scheduler
     x_4, y_4,yt_4, model_4, _ = exp1_efficient(
-        loader, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR,
+        loader, POINTS_PT_DIR_RM, FEATURES_INPUT_DIR_RM, TARGET_DIR_RM,
         optimizer_cls=torch.optim.SGD,
         optimizer_kwargs={"lr": 1e-2, "momentum": 0.9},
         scheduler_cls=torch.optim.lr_scheduler.CosineAnnealingLR,
@@ -1026,7 +1077,7 @@ def _(
     )
 
     x_5, y_5, yt_5, model_5, _ = exp1_efficient(
-        loader, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR,
+        loader, POINTS_PT_DIR_RM, FEATURES_INPUT_DIR_RM, TARGET_DIR_RM,
         optimizer_cls=torch.optim.AdamW,
         optimizer_kwargs={"lr": 1e-3, "weight_decay": 1e-4},
         batch_size=16
@@ -1083,15 +1134,14 @@ def _(plt, sns, x, yt_1, yt_2, yt_3, yt_4, yt_5):
 def _(config, loader, plot_mesh_instance_visible_with_field, torch):
     def plotter_exp1_examples(id, dataset, model):
         uids = ['scene000002_img000175_obj000010_inst05', 'scene000002_img000224_obj000010_inst05', 'scene000002_img000625_obj000010_inst05', 'scene000002_img000096_obj000010_inst05', 'scene000002_img000909_obj000011_inst06', 'scene000002_img001099_obj000011_inst06', 'scene000002_img000039_obj000011_inst05', 'scene000002_img000809_obj000010_inst05', 'scene000002_img000428_obj000011_inst06', 'scene000002_img001131_obj000011_inst06']
-
-        scene_id, img_id, obj_id, inst_idx = loader.parse_instance_uid(uids[id])
+        _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(uids[id])
         points, features, target_raw = dataset.get_instance(uids[id])
         model.eval()
         with torch.no_grad():
             pred_normalized = model(features.to("cuda"))
             pred = dataset.denormalize(pred_normalized.cpu())
         plot_mesh_instance_visible_with_field(
-            loader, config, scene_id, img_id, inst_idx,
+            loader, config, _scene_id, _img_id, _inst_idx,
             points.numpy(), pred.numpy(),
         )
 
@@ -1114,56 +1164,6 @@ def _(mo):
     - testing with scene 2
     - Simple MLP
     """)
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _(ROOT, config, loader, np, plot_mesh_instance_visible_with_field):
-    # -- Experiment 2
-    POINTS_PT_DIR_FULL = ROOT / "lmo/cache/points_pT/"
-    FEATURES_INPUT_DIR_FULL = ROOT / "lmo/scalarfield_full/training/input/"
-    TARGET_DIR_FULL = ROOT/ "lmo/scalarfield_full/training/target/"
-    scene_id, img_id, obj_id, inst_idx = 2, 47, 10, 5
-    # load file from system
-    symmetry_field_ = np.load(TARGET_DIR_FULL/ (loader.instance_uid(scene_id, img_id, obj_id, inst_idx) + ".npz") )["target"]
-    points_ = np.load(POINTS_PT_DIR_FULL/ (loader.instance_uid(scene_id, img_id, obj_id, inst_idx) + ".npz") )["points"]
-    plot_mesh_instance_visible_with_field(loader, config, scene_id, img_id, inst_idx, points_, symmetry_field_)
-    return (
-        FEATURES_INPUT_DIR_FULL,
-        POINTS_PT_DIR_FULL,
-        TARGET_DIR_FULL,
-        img_id,
-        inst_idx,
-        obj_id,
-        scene_id,
-    )
-
-
-@app.cell
-def _(
-    FEATURES_INPUT_DIR_FULL,
-    POINTS_PT_DIR_FULL,
-    config,
-    img_id,
-    inst_idx,
-    loader,
-    np,
-    obj_id,
-    plot_mesh_instance_with_dgedi_features,
-    scene_id,
-):
-    uid = loader.instance_uid(scene_id, img_id, obj_id, inst_idx)
-    points_2 = np.load(POINTS_PT_DIR_FULL / (uid + ".npz"))["points"]
-    features_ = np.load(FEATURES_INPUT_DIR_FULL / (uid + ".npz"))["features"]
-
-    plot_mesh_instance_with_dgedi_features(
-        loader, config, scene_id, img_id, inst_idx, points_2, features_
-    )
     return
 
 
@@ -1200,29 +1200,6 @@ def _(
     plot_error_distribution(df)
     plot_error_vs_visibility(df)   # requiere haber pasado loader a evaluate_split
     plot_pred_vs_target(df)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## MlFlow examples
-    """)
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
     return
 
 
