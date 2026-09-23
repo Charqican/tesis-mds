@@ -8,6 +8,7 @@ from pose6d.preprocessing import (
     extract_scene_frames_pcs,
     save_frame_pcs,
     save_instance_pcs,
+    save_pT_version,
 )
 from pose6d.config import LMOConfig
 from pose6d.loader import LMOLoader
@@ -41,10 +42,30 @@ def main() -> None:
     saved = []  # for lint
     if args.mode == "pT":
         log.info("Saving instances of objects")
+
         instances = extract_scene_instances_pcs(
-            loader, args.scene_id, list(target_obj_ids), args.min_visib
+            loader,
+            args.scene_id,
+            list(target_obj_ids),
+            args.min_visib,
+            **args.outlier_removal_params,
         )
-        saved = save_instance_pcs(instances, cache_path / "points_pT")
+        save_path = (
+            cache_path / args.version_name / "points_pT"
+            if args.version_name
+            else cache_path / "points_pT"
+        )
+
+        saved = save_instance_pcs(instances, save_path)
+        data_version_name = "" if not args.version_name else args.version_name
+        save_pT_version(
+            loader,
+            args.scene_id,
+            data_version_name,
+            0,
+            [x.stem for x in saved],
+            save_path,
+        )
         log.info(f"Saved {len(saved)} object instances")
 
     if args.mode == "frame":
@@ -92,6 +113,21 @@ def parse_args() -> argparse.Namespace:
         help=f"Modes available are pT and frames.",
     )
 
+    p.add_argument(
+        "--outlier-removal-params",
+        "-rm",
+        type=str,
+        default=True,
+        help="'nb_neighbours, std' tuple for statistical removal. floats.",
+    )
+
+    p.add_argument(
+        "--version-name",
+        "-vn",
+        type=str,
+        help="If this arguments is not empty, the extracted pT will be saved in a directory containing this name with a .json",
+    )
+
     args = p.parse_args()
 
     if args.dataset is None:
@@ -110,6 +146,13 @@ def parse_args() -> argparse.Namespace:
 
     if args.mode not in ["pT", "frame"]:
         p.error("mode should be pTr or frame")
+
+    if args.outlier_removal_params:
+        rm_stats = args.outlier_removal_params.split(",")
+        args.outlier_removal_params = {
+            "nb_neighbors": int(rm_stats[0].strip()),
+            "std": float(rm_stats[1].strip()),
+        }
 
     return args
 

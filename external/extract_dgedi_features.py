@@ -76,6 +76,12 @@ def parse_args() -> argparse.Namespace:
         help="Name of subfolder inside root. the resulting features will be saved in root/lmo/experiment-name/training/input",
     )
 
+    p.add_argument(
+        "--version-name",
+        "-vn",
+        type=str,
+    )
+
     p.add_argument("--scene-id", "-s", type=int, default=10)
 
     p.add_argument("--batch-size", "-b", type=int, default=None)
@@ -121,7 +127,12 @@ def process_one(npz_path: Path, model, features_dir: Path) -> None:
 
 def main():
     args = parse_args()
-    points_pt_dir = args.root / "lmo" / "cache" / "points_pT"
+    points_pt_dir = args.root / "lmo" / "cache"
+    points_pt_dir = (
+        points_pt_dir / args.version_name / "points_pT"
+        if args.version_name
+        else args.points_pt / "points_pT"
+    )
     features_input_dir = args.root / "lmo" / args.experiment_name / "training" / "input"
 
     all_inputs = sorted(points_pt_dir.rglob(f"scene{args.scene_id:06d}_*.npz"))

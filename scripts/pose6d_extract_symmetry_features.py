@@ -110,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=2,
     )
+    p.add_argument(
+        "--version-name",
+        "-vn",
+        type=str,
+    )
     # TODO: add mode (pt or frame)
 
     args = p.parse_args()
@@ -129,8 +134,12 @@ def parse_args() -> argparse.Namespace:
         p.error("Pass --root or set POSE6D_ROOT in .env")
 
     exp = args.experiment_name
-
-    args.points_pt = args.root / "lmo" / "cache" / "points_pT"
+    args.points_pt = args.root / "lmo" / "cache"
+    args.points_pt = (
+        args.points_pt / args.version_name / "points_pT"
+        if args.version_name
+        else args.points_pt / "points_pT"
+    )
     args.target = args.root / "lmo" / exp / "training" / "target"
 
     return args
