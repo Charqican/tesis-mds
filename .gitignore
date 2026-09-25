@@ -19,3 +19,7 @@ pyrightconfig.json
 external/dgedi_env/
 external/dgedi/checkpoints/
 external/dgedi/.cache/
+
+# Artifacts
+mlartifacts/
+mlflow.db
