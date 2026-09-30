@@ -5,8 +5,7 @@ import argparse
 import numpy as np
 from dotenv import load_dotenv
 
-from pose6d.config import LMOConfig
-from pose6d.loader import LMOLoader
+from pose6d.loader import build_loader
 from pose6d.features import compute_canonical_symmetry_field
 
 # TODO: should be in preprocessing
@@ -22,36 +21,40 @@ the following file structure for a dataset (eg. lmo):
 Dataset root: 
     {data}/lmo
 Partial pointclouds:
-    {root}/lmo/cache/points_pT
+    {root}/{dataset_type}/cache/points_pT
 Frame pointclouds:
-    {root}/lmo/cache/points_frames
+    {root}/{dataset_type}/cache/points_frames
 
 Extracted features:
-    {root}/lmo/{experiment_name}/training/target
+    {root}/{dataset_type}/{experiment_name}/training/target
 -----
 
 The only neccesary parameters are a 'data' root directory containing the dataset, a 'root' 
 directory containing the processed data and an 'experiment_name'. 'root' and 'data' can be
-the same folder, but it is expected to contain point_pT
+the same folder, but it is expected to contain point_pT. --dataset-type selects lmo or bpr,
+--model-root is required for bpr.
 """
 
 
 def main() -> None:
     args = parse_args()
     print(f"dataset: {args.dataset}, root: {args.root}, pt: {args.points_pt}")
-    config = LMOConfig.from_root(args.dataset)
-    loader = LMOLoader(config)
+    loader = build_loader(args.dataset_type, args.dataset, args.model_root)
 
     canonical_cache: dict[int, tuple] = {}
     args.target.mkdir(parents=True, exist_ok=True)
 
-    pt_files = sorted(args.points_pt.rglob(f"scene{args.scene_id:06d}_*.npz"))
+    pt_files = sorted(
+        args.points_pt.rglob(f"{loader.dataset_name}_scene{args.scene_id:06d}_*.npz")
+    )
     if not pt_files:
         raise FileNotFoundError(f"No partial points found in {args.points_pt}.")
 
     for pt_path in pt_files:
         uid = pt_path.stem
-        scene_id, img_id, obj_id, inst_idx = loader.parse_instance_uid(uid)
+        dataset_name, scene_id, img_id, obj_id, inst_idx = loader.parse_instance_uid(
+            uid
+        )
 
         pt_data = np.load(pt_path)
         points = pt_data["points"]
@@ -59,9 +62,7 @@ def main() -> None:
         instance = loader.load_instances(scene_id, img_id)[inst_idx]
 
         if obj_id not in canonical_cache:
-            canonical_cache[obj_id] = compute_canonical_symmetry_field(
-                config, loader, obj_id
-            )
+            canonical_cache[obj_id] = compute_canonical_symmetry_field(loader, obj_id)
         sample_points, symmetry_scalar_field = canonical_cache[obj_id]
 
         # Obtain target symmetry field F_sym(pT)
@@ -90,6 +91,19 @@ def parse_args() -> argparse.Namespace:
         "-d",
         type=Path,
         help="Path to BOP dataset root (e.g. .../lmo). Fallback: POSE6D_DATASET in .env",
+    )
+    p.add_argument(
+        "--dataset-type",
+        "-t",
+        type=str,
+        default="lmo",
+        choices=["lmo", "pbr"],
+        help="Which BOP dataset layout to use.",
+    )
+    p.add_argument(
+        "--model-root",
+        type=Path,
+        help="Object model root, required for --dataset-type bpr (fallback: POSE6D_MODEL_ROOT in .env)",
     )
     p.add_argument(
         "--root",
@@ -133,14 +147,23 @@ def parse_args() -> argparse.Namespace:
     if args.root is None:
         p.error("Pass --root or set POSE6D_ROOT in .env")
 
+    if args.model_root is None:
+        env = os.getenv("POSE6D_MODEL_ROOT")
+        if env:
+            args.model_root = Path(env)
+    if args.dataset_type == "pbr" and args.model_root is None:
+        p.error(
+            "Pass --model-root or set POSE6D_MODEL_ROOT in .env for --dataset-type bpr"
+        )
+
     exp = args.experiment_name
-    args.points_pt = args.root / "lmo" / "cache"
+    args.points_pt = args.root / args.dataset_type / "cache"
     args.points_pt = (
         args.points_pt / args.version_name / "points_pT"
         if args.version_name
         else args.points_pt / "points_pT"
     )
-    args.target = args.root / "lmo" / exp / "training" / "target"
+    args.target = args.root / args.dataset_type / exp / "training" / "target"
 
     return args
 

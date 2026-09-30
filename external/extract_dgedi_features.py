@@ -21,7 +21,6 @@ from utils import (
 
 # WARNING: instance diameter needs to be revised as its not clear if we should use the complete object
 # INFO: the following code is entirely based on the DEMO script of the original repository
-# TODO: in case of other dataset the subfolder 'lmo' should be changed
 try:
     from tqdm import tqdm
 
@@ -65,7 +64,16 @@ def parse_args() -> argparse.Namespace:
         "--root",
         "-r",
         type=Path,
-        help="Root directory for processed data (fallback: POSE6D_ROOT in .env). The script will target lmo/cache/inside root",
+        help="Root directory for processed data (fallback: POSE6D_ROOT in .env). The script will target {dataset-type}/cache/ inside root",
+    )
+
+    p.add_argument(
+        "--dataset-type",
+        "-t",
+        type=str,
+        default="lmo",
+        choices=["lmo", "pbr"],
+        help="Which BOP dataset layout to target under root.",
     )
 
     p.add_argument(
@@ -73,7 +81,7 @@ def parse_args() -> argparse.Namespace:
         "-e",
         type=str,
         default="scalarfield",
-        help="Name of subfolder inside root. the resulting features will be saved in root/lmo/experiment-name/training/input",
+        help="Name of subfolder inside root. the resulting features will be saved in root/{dataset-type}/experiment-name/training/input",
     )
 
     p.add_argument(
@@ -127,15 +135,19 @@ def process_one(npz_path: Path, model, features_dir: Path) -> None:
 
 def main():
     args = parse_args()
-    points_pt_dir = args.root / "lmo" / "cache"
+    points_pt_dir = args.root / args.dataset_type / "cache"
     points_pt_dir = (
         points_pt_dir / args.version_name / "points_pT"
         if args.version_name
-        else args.points_pt / "points_pT"
+        else points_pt_dir / "points_pT"
     )
-    features_input_dir = args.root / "lmo" / args.experiment_name / "training" / "input"
+    features_input_dir = (
+        args.root / args.dataset_type / args.experiment_name / "training" / "input"
+    )
 
-    all_inputs = sorted(points_pt_dir.rglob(f"scene{args.scene_id:06d}_*.npz"))
+    all_inputs = sorted(
+        points_pt_dir.rglob(f"{args.dataset_type}_scene{args.scene_id:06d}_*.npz")
+    )
     pending = (
         [p for p in all_inputs if not (features_input_dir / p.name).exists()]
         if SKIP_EXISTING
