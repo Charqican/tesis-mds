@@ -344,5 +344,5 @@ def build_loader(
     if dataset_type == "pbr":
         if model_root is None:
             raise ValueError("BPR requires model_root")
-        return BPRLoader.from_roots(dataset_root, model_root)
+        return PBRLoader.from_roots(dataset_root, model_root)
     raise ValueError(f"Unknown dataset type: {dataset_type}")
