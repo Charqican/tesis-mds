@@ -138,11 +138,11 @@ def _(mo):
 def _(FEATURES_INPUT_DIR, POINTS_PT_DIR, SymmetryFieldMLP, TARGET_DIR, loader):
     import mlflow
 
-    from experiments.mlflow_wrapper import run_experiment      # ajustá el path si lo dejaste en otro módulo
+    from experiments.mlflow_wrapper import run_experiment      
     from experiments.experiment_setup import setup_exp1
     from experiments.experiment_training import training_function
 
-    mlflow.set_tracking_uri("http://localhost:5000")   # el mismo que tuneleaste por ssh
+    mlflow.set_tracking_uri("http://localhost:5000")   
     mlflow.set_experiment("experiment_1_10")
 
 
@@ -1101,7 +1101,7 @@ def _(
 
 @app.cell
 def _(plt, sns, x_1, y_1, y_2, y_3, y_4, y_5):
-    x = list(range(0, x_1, 50))
+    x = list(range(0, x_1, 20))
     sns.lineplot(x=x, y=y_1, label="batch_16")
     sns.lineplot(x=x, y=y_2, label="batch_32")
     sns.lineplot(x=x, y=y_3, label="batch_64")
@@ -1150,7 +1150,7 @@ def _(config, loader, plot_mesh_instance_visible_with_field, torch):
 
 @app.cell
 def _(dataset_exp1, model_1, plotter_exp1_examples):
-    plotter_exp1_examples(0, dataset_exp1, model_1)
+    plotter_exp1_examples(2, dataset_exp1, model_1)
     return
 
 

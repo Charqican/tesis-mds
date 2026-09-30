@@ -21,8 +21,7 @@ def _():
     import matplotlib.pyplot as plt
     import seaborn as sns
 
-    from pose6d.config import LMOConfig
-    from pose6d.loader import LMOLoader
+    from pose6d.loader import LMOLoader, PBRLoader
     from pose6d.selection import uids_by_visib_percentile
     from pose6d.notebook_plots import (
         plot_mesh_with_scalar_field,
@@ -32,14 +31,16 @@ def _():
     SCENE_ID = 2
 
     lmo_root = Path("/mnt/data/dev/dataset/tesis/BOP/lmo/lmo")
-    config = LMOConfig.from_root(lmo_root)
-    loader = LMOLoader(config)
+    pbr_root = Path("/mnt/data/dev/dataset/tesis/BOP/pbr/lm_train_pbr/train_pbr/")
+    lmo_loader = LMOLoader.from_root(lmo_root)
+    pbr_loader = PBRLoader.from_roots(pbr_root, lmo_root)
+    loader = pbr_loader
 
     ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
     # outlier-removed data
-    POINTS_PT_DIR = ROOT / "lmo/cache/rm_outliers_20_2/points_pT/"
-    FEATURES_INPUT_DIR = ROOT / "lmo/scalarfield_rm/training/input/"
-    TARGET_DIR = ROOT / "lmo/scalarfield_rm/training/target/"
+    POINTS_PT_DIR = ROOT / f"{loader.dataset_name}/cache/rm_outliers_20_2/points_pT/"
+    FEATURES_INPUT_DIR = ROOT / f"{loader.dataset_name}/scalarfield_rm/training/input/"
+    TARGET_DIR = ROOT / f"{loader.dataset_name}/scalarfield_rm/training/target/"
 
     extracted_uids = {p.stem for p in POINTS_PT_DIR.glob("*.npz")}
     return (
@@ -47,7 +48,6 @@ def _():
         POINTS_PT_DIR,
         SCENE_ID,
         TARGET_DIR,
-        config,
         extracted_uids,
         loader,
         mo,
@@ -184,16 +184,17 @@ def _(
     extracted_uids,
     instances_10,
     instances_11,
+    loader,
     mo,
     uids_by_visib_percentile,
 ):
     percentiles = [10.0, 50.0, 90.0]
     uids_by_obj = {
         10: uids_by_visib_percentile(
-            instances_10, SCENE_ID, percentiles, valid_uids=extracted_uids
+            loader, instances_10, SCENE_ID, percentiles, valid_uids=extracted_uids
         ),
         11: uids_by_visib_percentile(
-            instances_11, SCENE_ID, percentiles, valid_uids=extracted_uids
+            loader, instances_11, SCENE_ID, percentiles, valid_uids=extracted_uids
         ),
     }
 
@@ -219,6 +220,7 @@ def _(
 ):
     selected_obj = int(obj_dropdown.value)
     selected_p = float(percentile_dropdown.value)
+    print(uids_by_obj)
     selected_uid = uids_by_obj[selected_obj][selected_p]
 
     points, features, target, _ = load_instance_npz(
@@ -228,18 +230,12 @@ def _(
 
 
 @app.cell
-def _(
-    config,
-    loader,
-    plot_mesh_with_scalar_field,
-    points,
-    selected_uid,
-    target,
-):
-    _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(selected_uid)
+def _(loader, plot_mesh_with_scalar_field, points, selected_uid, target):
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
+        selected_uid
+    )
     plot_mesh_with_scalar_field(
         loader,
-        config,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -252,17 +248,17 @@ def _(
 
 @app.cell
 def _(
-    config,
     features,
     loader,
     plot_mesh_instance_with_dgedi_features,
     points,
     selected_uid,
 ):
-    _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(selected_uid)
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
+        selected_uid
+    )
     plot_mesh_instance_with_dgedi_features(
         loader,
-        config,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -330,7 +326,7 @@ def _(mo):
 
 @app.cell
 def _(rank_runs):
-    mlflow_experiment_name = "experiment_1_10"
+    mlflow_experiment_name = "experiment_3_cross"
 
     ranked_runs = rank_runs(mlflow_experiment_name)
     ranked_runs[["run_id", "tags.mlflow.runName", "metrics.final_test_loss"]].head(6)
@@ -537,7 +533,6 @@ def _(mo):
 
 @app.cell
 def _(
-    config,
     error_points,
     error_pred,
     error_target,
@@ -545,10 +540,11 @@ def _(
     loader,
     plot_mesh_with_scalar_field,
 ):
-    _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(error_uid)
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
+        error_uid
+    )
     plot_mesh_with_scalar_field(
         loader,
-        config,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -573,7 +569,6 @@ def _(mo):
 
 @app.cell
 def _(
-    config,
     error_points,
     error_pred,
     error_target,
@@ -581,10 +576,11 @@ def _(
     loader,
     plot_gt_vs_pred_comparison,
 ):
-    _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(error_uid)
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
+        error_uid
+    )
     plot_gt_vs_pred_comparison(
         loader,
-        config,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -601,19 +597,19 @@ def _(
     FEATURES_INPUT_DIR,
     POINTS_PT_DIR,
     TARGET_DIR,
-    config,
     error_uid,
     load_instance_npz,
     loader,
     plot_mesh_instance_with_dgedi_features,
 ):
-    _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(error_uid)
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
+        error_uid
+    )
     _points, _features, _, _ = load_instance_npz(
         error_uid, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR
     )
     plot_mesh_instance_with_dgedi_features(
         loader,
-        config,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -637,7 +633,6 @@ def _(mo):
 
 @app.cell
 def _(
-    config,
     error_points,
     error_pred,
     error_target,
@@ -645,10 +640,11 @@ def _(
     loader,
     plot_gt_vs_pred_comparison_robust,
 ):
-    _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(error_uid)
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
+        error_uid
+    )
     plot_gt_vs_pred_comparison_robust(
         loader,
-        config,
         _scene_id,
         _img_id,
         _inst_idx,
