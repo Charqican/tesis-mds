@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from .config import LMOConfig
+from .config import LMOConfig, PBRConfig
 
 import numpy as np
 import torch
@@ -10,12 +10,11 @@ from typing import Iterator
 import json
 
 """
-1. This file contains dataclasses as interfaces to decouple the path resolver & dataloader from the dataset and its schema. 
-2. The implementation of LMOLoader uses the LMOConfig (which contains LMOPath as a field) to resolve access to the data. 
+1. This file contains dataclasses as interfaces to decouple the path resolver & dataloader from the dataset and its schema.
+2. BOPLoader implements generic BOP scene + model access. LMOLoader/BPRLoader only add dataset-specific constructors and a dataset_name tag.
 """
 
 
-# TODO: if needed a 'parser' can be abstracted for differnet datasets
 # TODO: missing axial symmetry implementation and getters
 
 
@@ -30,7 +29,6 @@ class InstanceData:
 
 
 # FrameData abstracts the concept of a given image with objects in a particular scene.
-# it contains a list of instanceData
 @dataclass(frozen=True)
 class FrameData:
     scene_id: int
@@ -57,27 +55,18 @@ class ModelInfo:
     symmetries_discrete: list[np.ndarray] | None  # cada uno (4,4), o None
 
 
+# WARNING: in case of multiple symmetries only one is returned
 class BOPLoader:
     """
-    General class that expects
-    """
-
-    pass
-
-
-class PBRLoader(BOPLoader):
-    pass
-
-
-# WARNING: in case of multiple symmetries only one is returned
-class LMOLoader:
-    """
-    helper dataclass that resolves, loads and parses data from the raw dataset.
+    Generic BOP loader: resolves, loads and parses scene + model data shared
+    by every BOP-format dataset (camera, gt, images, masks, object model
+    info / symmetry).
 
     ## Fields
 
-    config: LMOConfig
-        A config dataclass that containts the necessary information to load the dataset
+    config: a config dataclass exposing a `.paths` field (a BOPPath).
+
+    dataset_name: class attribute set by each subclass, used to tag uids.
 
     ## Methods
 
@@ -105,40 +94,43 @@ class LMOLoader:
     iter_frames(scene_id):
         returns an iterator of FrameData of every image inside a scene
 
-    load_symmetry_data(obj_id):
+    load_symmetry_plane(obj_id):
         returns a SymmetryData if the object has symmetries, None if not. It only returns one plane.
 
     symmetric_obj_ids():
         returns every symmetric object id.
 
-    parse_instance_uid(uid).
-        returns every id that composes an uid. An uid identifies a partial pointcloud of a given instance of an object in a particular frame inside a scene.
+    instance_uid(...) / parse_instance_uid_(uid):
+        build/parse the uid identifying a partial pointcloud of a given
+        instance of an object in a particular frame inside a scene. Tagged
+        with dataset_name so uids stay unique across datasets.
     """
 
-    def __init__(self, config: LMOConfig) -> None:
+    dataset_name: str | None = None
+
+    def __init__(self, config) -> None:
         self.cfg = config
         self.paths = config.paths
 
-    @classmethod
-    def from_root(cls, root: str | Path) -> "LMOLoader":
-        return cls(LMOConfig.from_root(root))
-
-    # parse ids into an unique identifier (uid) Simpler than a hash table
+    # functions as an interface, should fail if called from a non instance class (ej bpr or lmo)
     @classmethod
     def instance_uid(
         cls, scene_id: int, img_id: int, obj_id: int, inst_idx: int
     ) -> str:
-        return f"scene{scene_id:06d}_img{img_id:06d}_obj{obj_id:06d}_inst{inst_idx:02d}"
+        if cls.dataset_name is None:
+            raise NotImplementedError("BOPLoader subclasses must set dataset_name")
+        return f"{cls.dataset_name}_scene{scene_id:06d}_img{img_id:06d}_obj{obj_id:06d}_inst{inst_idx:02d}"
 
     @classmethod
-    def parse_instance_uid_(cls, uid: str) -> tuple[int, int, int, int]:
-        """retrieves the instance ids of a given uid: uid -> (scene_id, img_id, obj_id, inst_idx)."""
+    def parse_instance_uid(cls, uid: str) -> tuple[str, int, int, int, int]:
+        """retrieves the ids of a given uid: uid -> (dataset_name, scene_id, img_id, obj_id, inst_idx)."""
         parts = uid.split("_")
-        scene_id = int(parts[0].removeprefix("scene"))
-        img_id = int(parts[1].removeprefix("img"))
-        obj_id = int(parts[2].removeprefix("obj"))
-        inst_idx = int(parts[3].removeprefix("inst"))
-        return scene_id, img_id, obj_id, inst_idx
+        dataset_name = parts[0]
+        scene_id = int(parts[1].removeprefix("scene"))
+        img_id = int(parts[2].removeprefix("img"))
+        obj_id = int(parts[3].removeprefix("obj"))
+        inst_idx = int(parts[4].removeprefix("inst"))
+        return dataset_name, scene_id, img_id, obj_id, inst_idx
 
     def load_camera(self, scene_id: int, img_id: int) -> tuple[np.ndarray, float]:
         data = self._load_json_int_keys(self.paths.scene_camera_path(scene_id))
@@ -170,7 +162,7 @@ class LMOLoader:
 
     def load_models_info(self) -> dict[int, ModelInfo]:
         "Returns a dictionary with every object ModelInfo as a value and id as a key"
-        raw = json.loads(self.cfg.paths.models_info.read_text())
+        raw = json.loads(self.paths.models_info.read_text())
         result = {}
         for obj_id_str, info in raw.items():
             obj_id = int(obj_id_str)
@@ -188,9 +180,8 @@ class LMOLoader:
             )
         return result
 
-    # WARNING:only one symmetry
+    # WARNING: only one symmetry
     def load_symmetry_plane(self, obj_id: int) -> SymmetryData | None:
-
         with open(self.paths.models_info) as f:
             info = json.load(f)
 
@@ -204,7 +195,7 @@ class LMOLoader:
 
         return self._parse_symmetry_matrix(
             symmetries[0]
-        )  # harcoded to 1 plane of symmetry
+        )  # harcoded to 1 plane of symmetry, this could change in the future
 
     # --- Image loading ---
     def load_depth(self, scene_id: int, img_id: int) -> np.ndarray:
@@ -280,16 +271,6 @@ class LMOLoader:
             if info.symmetries_discrete is not None
         }
 
-    # @Deprecated: use class method instead
-    def parse_instance_uid(self, uid: str) -> tuple[int, int, int, int]:
-        """retrieves the instance ids of a given uid: uid -> (scene_id, img_id, obj_id, inst_idx)."""
-        parts = uid.split("_")
-        scene_id = int(parts[0].removeprefix("scene"))
-        img_id = int(parts[1].removeprefix("img"))
-        obj_id = int(parts[2].removeprefix("obj"))
-        inst_idx = int(parts[3].removeprefix("inst"))
-        return scene_id, img_id, obj_id, inst_idx
-
     # --- internal parsers ---
     def _load_json_int_keys(self, path: Path) -> dict:
         with open(path, "r") as f:
@@ -332,6 +313,36 @@ class LMOLoader:
         return best_idx, instances[best_idx]
 
 
-# @ DEPRECATED. prefer classmethod
-def instance_uid(scene_id: int, img_id: int, obj_id: int, inst_idx: int) -> str:
-    return f"scene{scene_id:06d}_img{img_id:06d}_obj{obj_id:06d}_inst{inst_idx:02d}"
+class LMOLoader(BOPLoader):
+    """BOPLoader pointed at its own tree; models reference itself."""
+
+    dataset_name = "lmo"
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "LMOLoader":
+        return cls(LMOConfig.from_root(root))
+
+
+class PBRLoader(BOPLoader):
+    """BOPLoader over BOP PBR scenes; models default to an external root (e.g. lmo)."""
+
+    dataset_name = "pbr"
+
+    @classmethod
+    def from_roots(cls, root: str | Path, model_root: str | Path) -> "PBRLoader":
+        return cls(PBRConfig.from_roots(root, model_root))
+
+
+# Simple utility function for loading models
+def build_loader(
+    dataset_type: str,
+    dataset_root: str | Path,
+    model_root: str | Path | None = None,
+) -> BOPLoader:
+    if dataset_type == "lmo":
+        return LMOLoader.from_root(dataset_root)
+    if dataset_type == "pbr":
+        if model_root is None:
+            raise ValueError("BPR requires model_root")
+        return BPRLoader.from_roots(dataset_root, model_root)
+    raise ValueError(f"Unknown dataset type: {dataset_type}")

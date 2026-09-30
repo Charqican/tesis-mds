@@ -10,14 +10,15 @@ import trimesh
 from sklearn.decomposition import PCA
 
 from pose6d.config import LMOConfig
-from pose6d.loader import LMOLoader
+from pose6d.loader import BOPLoader
 from pose6d.geometry_utils import backproject_depth, transform_points
 from pose6d.preprocessing import extract_instances_pcs
 
 
 def plot_frame_meshes_and_sensor(
-    loader: LMOLoader, config: LMOConfig, scene_id: int, img_id: int
+    loader: BOPLoader, scene_id: int, img_id: int
 ) -> go.Figure:
+    config = loader.cfg
     K, depth_scale = loader.load_camera(scene_id, img_id)
     depth_image = loader.load_depth(scene_id, img_id)
     frame_point_cloud = backproject_depth(
@@ -64,8 +65,9 @@ def plot_frame_meshes_and_sensor(
 
 
 def plot_mesh_instance_visible(
-    loader: LMOLoader, config: LMOConfig, scene_id: int, img_id: int, inst_idx: int
+    loader: BOPLoader, scene_id: int, img_id: int, inst_idx: int
 ) -> go.Figure:
+    config = loader.cfg
     instance = loader.load_instances(scene_id, img_id)[inst_idx]
     obj_id = instance.obj_id
 
@@ -113,8 +115,7 @@ def plot_mesh_instance_visible(
 
 # general purpose: symmetry field, error field, or any other per-point scalar
 def plot_mesh_with_scalar_field(
-    loader: LMOLoader,
-    config: LMOConfig,
+    loader: BOPLoader,
     scene_id: int,
     img_id: int,
     inst_idx: int,
@@ -123,6 +124,7 @@ def plot_mesh_with_scalar_field(
     colorscale: str = "Viridis",
     colorbar_title: str = "value",
 ) -> go.Figure:
+    config = loader.cfg
     instance = loader.load_instances(scene_id, img_id)[inst_idx]
     obj_id = instance.obj_id
 
@@ -199,8 +201,7 @@ def features_to_rgb(
 
 
 def plot_mesh_instance_with_dgedi_features(
-    loader: LMOLoader,
-    config: LMOConfig,
+    loader: BOPLoader,
     scene_id: int,
     img_id: int,
     inst_idx: int,
@@ -210,6 +211,7 @@ def plot_mesh_instance_with_dgedi_features(
     show_mesh: bool = True,
     percentiles: tuple[float, float] = (2.0, 98.0),
 ) -> go.Figure:
+    config = loader.cfg
     instance = loader.load_instances(scene_id, img_id)[inst_idx]
     obj_id = instance.obj_id
 
@@ -312,8 +314,7 @@ def mask_error_outliers(error: np.ndarray, std_ratio: float = 2.0) -> np.ndarray
 
 
 def plot_gt_vs_pred_comparison(
-    loader: LMOLoader,
-    config: LMOConfig,
+    loader: BOPLoader,
     scene_id: int,
     img_id: int,
     inst_idx: int,
@@ -323,6 +324,7 @@ def plot_gt_vs_pred_comparison(
     title: str = "",
     colorscale: str = "Viridis",
 ) -> go.Figure:
+    config = loader.cfg
     points = np.asarray(points)
     target = np.asarray(target)
     pred = np.asarray(pred)
@@ -406,8 +408,7 @@ def plot_gt_vs_pred_comparison(
 
 # same idea, but points whose error is a statistical outlier are grayed out instead of colored
 def plot_gt_vs_pred_comparison_robust(
-    loader: LMOLoader,
-    config: LMOConfig,
+    loader: BOPLoader,
     scene_id: int,
     img_id: int,
     inst_idx: int,
@@ -418,6 +419,7 @@ def plot_gt_vs_pred_comparison_robust(
     title: str = "",
     colorscale: str = "Viridis",
 ) -> go.Figure:
+    config = loader.cfg
     points = np.asarray(points)
     target = np.asarray(target)
     pred = np.asarray(pred)

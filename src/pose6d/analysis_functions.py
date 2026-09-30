@@ -9,7 +9,7 @@ import mlflow
 import mlflow.pytorch as mlflowpy
 
 from pose6d.dataset import SymmetryFieldInstanceDataset
-from pose6d.loader import LMOLoader
+from pose6d.loader import BOPLoader
 
 
 @dataclass
@@ -79,7 +79,7 @@ def instance_errors(
     run: RunArtifacts,
     uids: list[str],
     device=None,
-    loader: LMOLoader | None = None,
+    loader: BOPLoader | None = None,
 ) -> pd.DataFrame:
     device = device or next(run.model.parameters()).device
     model = run.model.to(device).eval()
@@ -103,7 +103,9 @@ def instance_errors(
             }
 
             if loader is not None:
-                scene_id, img_id, obj_id, inst_idx = loader.parse_instance_uid(uid)
+                dataset_name, scene_id, img_id, obj_id, inst_idx = (
+                    loader.parse_instance_uid(uid)
+                )
                 key = (scene_id, img_id)
                 if key not in frame_cache:
                     frame_cache[key] = loader.load_instances(scene_id, img_id)

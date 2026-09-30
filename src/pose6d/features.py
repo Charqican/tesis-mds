@@ -1,5 +1,5 @@
 from pipelines.backprojected_features import extract_features_fm
-from pose6d.loader import SymmetryData
+from pose6d.loader import BOPLoader, SymmetryData
 from pose6d.config import LMOConfig, LMOPath
 from pose6d.loader import LMOLoader
 from pose6d.geometry_utils import sample_mesh_fps
@@ -90,7 +90,7 @@ class MeshFeatureExtractor:
 # function used by the pT extractor script. It directly uses the MeshFeatureExtractor
 # WARNING: this function is coupled to the LMODataset, but can be easily be decoupled in the future
 def compute_canonical_symmetry_field(
-    config: LMOConfig, loader: LMOLoader, obj_id: int, n_sample_points=20000
+    loader: BOPLoader, obj_id: int, n_sample_points=20000
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Helper function that calls MeshFeatureExtractor from this module.
@@ -98,6 +98,7 @@ def compute_canonical_symmetry_field(
     params: (config: LMOConfig, loader. LMOLoader, obj_id: int)
     Returns (mesh_points, symmetry_scalar).
     """
+    config = loader.cfg
     symmetry_data = loader.load_symmetry_plane(obj_id)
     if symmetry_data is None:
         raise ValueError(f"No symmetry plane metadata for obj_id={obj_id}")
@@ -120,11 +121,9 @@ def compute_canonical_symmetry_field(
 
 # DEPRECATED: this function is no longer in use after changes in the file system format
 def cache_canonical_symmetry_field(
-    config: LMOConfig, loader: LMOLoader, obj_id: int, out_dir: Path
+    loader: BOPLoader, obj_id: int, out_dir: Path
 ) -> Path:
-    mesh_points, symmetry_scalar = compute_canonical_symmetry_field(
-        config, loader, obj_id
-    )
+    mesh_points, symmetry_scalar = compute_canonical_symmetry_field(loader, obj_id)
     out_path = out_dir / f"obj_{obj_id:06d}.npz"
     out_dir.mkdir(parents=True, exist_ok=True)
     np.savez(

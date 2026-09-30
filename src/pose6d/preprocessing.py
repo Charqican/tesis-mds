@@ -7,7 +7,7 @@ import torch
 
 import logger
 from pose6d.config import LMOConfig
-from pose6d.loader import InstanceData, LMOLoader, instance_uid
+from pose6d.loader import BOPLoader, InstanceData, LMOLoader
 from pose6d.geometry_utils import (
     isolate_object_points,
     backproject_depth,
@@ -22,7 +22,7 @@ from logger import pose6d_preprocessing_logger as log
 # Gives an iterator of every instance pointcloud in a scene
 # TODO: maybe change this to return a list
 def extract_instances_pcs(
-    loader: LMOLoader,
+    loader: BOPLoader,
     scene_id: int,
     img_id: int,
     target_obj_ids: list[int],
@@ -72,7 +72,7 @@ def extract_instances_pcs(
             torch.from_numpy(pts).unsqueeze(0), K=config.sample_points
         )
 
-        uid = instance_uid(scene_id, img_id, instance.obj_id, inst_idx)
+        uid = loader.instance_uid(scene_id, img_id, instance.obj_id, inst_idx)
 
         if ratio > 0.2:
             log.warning(f"Outlier ratio too high, uid: {uid}, ratio: {ratio}")
@@ -80,7 +80,7 @@ def extract_instances_pcs(
 
 
 def extract_scene_instances_pcs(
-    loader: LMOLoader,
+    loader: BOPLoader,
     scene_id: int,
     target_obj_ids: list[int],
     min_visib_fract: float = 0.05,
@@ -115,7 +115,7 @@ def save_instance_pcs(
     return saved
 
 
-def extract_frames_pcs(loader, scene_id, img_id) -> tuple[str, np.ndarray]:
+def extract_frames_pcs(loader: BOPLoader, scene_id, img_id) -> tuple[str, np.ndarray]:
     config = loader.cfg
     K, depth_scale = loader.load_camera(scene_id, img_id)
     depth_image = loader.load_depth(scene_id, img_id)
@@ -125,7 +125,7 @@ def extract_frames_pcs(loader, scene_id, img_id) -> tuple[str, np.ndarray]:
     return f"scene{scene_id:06d}_img{img_id}", frame_point_cloud
 
 
-def extract_scene_frames_pcs(loader: LMOLoader, scene_id: int):
+def extract_scene_frames_pcs(loader: BOPLoader, scene_id: int):
     img_ids = loader.list_image_ids(scene_id)
     log.info(f"Imgs in scene: {len(img_ids)}")
 
@@ -147,7 +147,7 @@ def save_frame_pcs(frames: Iterator[tuple[str, np.ndarray]], out_dir: str | Path
 
 
 def save_pT_version(
-    loader: LMOLoader,
+    loader: BOPLoader,
     scene_id: int | list[int],
     version_name: str,
     total_objects: int,
@@ -155,10 +155,11 @@ def save_pT_version(
     out_dir: Path,
     **kwargs,
 ) -> dict:
-    objects_tuples = [tuple(loader.parse_instance_uid(u)[2:4]) for u in uids]
+    objects_tuples = [tuple(loader.parse_instance_uid(u)[3:5]) for u in uids]
     obj_counts = Counter(obj_id for obj_id, _ in objects_tuples)
 
     metadata = {
+        "dataset": loader.dataset_name,
         "version_name": version_name,
         "scene_id": scene_id,
         "total_objects": total_objects,
