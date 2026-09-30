@@ -1,10 +1,10 @@
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset, Subset
-from pose6d.loader import LMOLoader
 from logger import pose6d_dataset_logger as log
 
 
@@ -45,6 +45,17 @@ def load_instance_npz(
     return points, inp, target, k
 
 
+# One dataset's worth of file locations. uids=None discovers every uid under
+# input_dir; an explicit list restricts to a subset (e.g. one scene for a
+# small local trial).
+@dataclass(frozen=True)
+class DatasetSource:
+    points_dir: Path
+    input_dir: Path
+    target_dir: Path
+    uids: list[str] | None = None
+
+
 # INFO: a lot of raise blocks as this implementation is essentialy a state machine.
 class SymmetryFieldInstanceDataset(Dataset):
     _SPLIT_IDS = {"train": 0, "val": 1, "test": 2}
@@ -56,15 +67,41 @@ class SymmetryFieldInstanceDataset(Dataset):
         target_dir: Path,
         uids: list[str] | None = None,
     ):
-        self.points_dir = points_dir
-        self.input_dir = input_dir
-        self.target_dir = target_dir
-
         all_uids = sorted(p.stem for p in input_dir.rglob("*.npz"))
         if not all_uids:
             raise FileNotFoundError(f"No .npz file found in {input_dir}")
 
-        self.uid_list = uids if uids is not None else all_uids
+        uid_list = uids if uids is not None else all_uids
+        dirs_by_uid = {uid: (points_dir, input_dir, target_dir) for uid in uid_list}
+        self._init_common(dirs_by_uid)
+
+    @classmethod
+    def from_sources(
+        cls, sources: list[DatasetSource]
+    ) -> "SymmetryFieldInstanceDataset":
+        dirs_by_uid: dict[str, tuple[Path, Path, Path]] = {}
+        for source in sources:
+            uids = source.uids
+            if uids is None:
+                uids = sorted(p.stem for p in source.input_dir.rglob("*.npz"))
+                if not uids:
+                    raise FileNotFoundError(f"No .npz file found in {source.input_dir}")
+            for uid in uids:
+                if uid in dirs_by_uid:
+                    raise ValueError(f"duplicate uid across sources: {uid}")
+                dirs_by_uid[uid] = (
+                    source.points_dir,
+                    source.input_dir,
+                    source.target_dir,
+                )
+
+        self = cls.__new__(cls)
+        self._init_common(dirs_by_uid)
+        return self
+
+    def _init_common(self, dirs_by_uid: dict[str, tuple[Path, Path, Path]]) -> None:
+        self._dirs_by_uid = dirs_by_uid
+        self.uid_list = list(dirs_by_uid.keys())
         self.split = torch.full((len(self.uid_list),), -1, dtype=torch.long)
 
         self._splits_assigned = False
@@ -138,8 +175,9 @@ class SymmetryFieldInstanceDataset(Dataset):
         all_points, all_input, all_targets = [], [], []
         expected_k = None
         for uid in self.uid_list:
+            points_dir, input_dir, target_dir = self._dirs_by_uid[uid]
             points, inp, target, expected_k = load_instance_npz(
-                uid, self.points_dir, self.input_dir, self.target_dir, expected_k
+                uid, points_dir, input_dir, target_dir, expected_k
             )
             all_points.append(points)
             all_input.append(inp)
@@ -212,6 +250,7 @@ class SymmetryFieldInstanceDataset(Dataset):
         if self._loaded:
             raise RuntimeError("dataset already loaded, use get_partition instead")
         uids = self.uids_for_filtered(predicate)
-        return SymmetryFieldInstanceDataset(
-            self.points_dir, self.input_dir, self.target_dir, uids=uids
-        )
+        dirs_by_uid = {uid: self._dirs_by_uid[uid] for uid in uids}
+        new = SymmetryFieldInstanceDataset.__new__(SymmetryFieldInstanceDataset)
+        new._init_common(dirs_by_uid)
+        return new
