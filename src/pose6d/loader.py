@@ -255,6 +255,23 @@ class LMOLoader:
                 instances=instances,
             )
 
+    # Iterate over scence and list all instances of objects, returns img_id and inst_idx for uid reconstruction.
+    def list_instances(
+        self, scene_id: int, obj_id: int | set[int] | None = None
+    ) -> list[tuple[int, int, InstanceData]]:
+        """
+        returns tuples img_id, inst_idx, inst : InstanceData
+        """
+        obj_ids = {obj_id} if isinstance(obj_id, int) else obj_id
+
+        result = []
+        for img_id in self.list_image_ids(scene_id):
+            for inst_idx, inst in enumerate(self.load_instances(scene_id, img_id)):
+                if obj_ids is not None and inst.obj_id not in obj_ids:
+                    continue
+                result.append((img_id, inst_idx, inst))
+        return result
+
     # iterate over object metadata to filter non discrete symmetries
     def symmetric_obj_ids(self) -> set[int]:
         return {
