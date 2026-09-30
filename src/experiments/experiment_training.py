@@ -1,5 +1,7 @@
-from experiments.experiment_setup import TrainData
 import torch
+from torch.utils.data import DataLoader
+from experiments.experiment_setup import TrainData
+from pose6d.dataset import SymmetryFieldInstanceDataset
 
 
 def training_function(
@@ -13,9 +15,20 @@ def training_function(
     on_epoch=None,
     device=None,
 ):
+
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    test_features = training_data.test_features.to(device)
-    test_targets = training_data.test_targets.to(device)
+
+    dataset: SymmetryFieldInstanceDataset = training_data.dataset
+    if not dataset._loaded:
+        dataset.load()
+
+    train_loader = DataLoader(
+        dataset.get_split("train"), batch_size=training_data.batch_size, shuffle=True
+    )
+    test_idx = dataset.indices_for("test")
+    test_input = dataset.input[test_idx].to(device)
+    test_targets = dataset.targets[test_idx].to(device)
+
     model = training_data.model.to(device)
     optimizer = optimizer_cls(model.parameters(), **(optimizer_kwargs or {}))
     scheduler = (
@@ -26,10 +39,10 @@ def training_function(
     loss_history, loss_test_history = [], []
     for epoch in range(n_epochs):
         epoch_loss, n_batches = 0.0, 0
-        for features, targets in training_data.train_loader:
-            features, targets = features.to(device), targets.to(device)
+        for inp, targets in train_loader:
+            inp, targets = inp.to(device), targets.to(device)
             optimizer.zero_grad()
-            pred = model(features.reshape(-1, training_data.feature_dim)).reshape(
+            pred = model(inp.reshape(-1, training_data.input_dim)).reshape(
                 targets.shape
             )
             loss = ((pred - targets) ** 2).mean(dim=1).mean()
@@ -44,7 +57,7 @@ def training_function(
             model.eval()
             with torch.no_grad():
                 test_pred = model(
-                    test_features.reshape(-1, training_data.feature_dim)
+                    test_input.reshape(-1, training_data.input_dim)
                 ).reshape(test_targets.shape)
                 mean_test_loss = (
                     ((test_pred - test_targets) ** 2).mean(dim=1).mean().item()
@@ -57,5 +70,4 @@ def training_function(
                     {"loss": loss_history[-1], "test_loss": mean_test_loss}, step=epoch
                 )
 
-    # model is inplace (as to(device) make it so), the model is returned for clarity and tracking
     return model, loss_history, loss_test_history

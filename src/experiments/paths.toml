@@ -1,0 +1,8 @@
+[lmo]
+root = "/mnt/data/dev/dataset/tesis/BOP/lmo/lmo"
+
+[training_lmo]
+root = "/mnt/data/dev/dataset/tesis/6dpose"
+points_pt_dir = "lmo/cache/rm_outliers_20_2/points_pT/"
+input_dir = "lmo/scalarfield_rm/training/input/"
+target_dir = "lmo/scalarfield_rm/training/target/"
