@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
         "-t",
         type=str,
         default="lmo",
-        choices=["lmo", "bpr"],
+        choices=["lmo", "pbr"],
         help="Which BOP dataset layout to use.",
     )
 
