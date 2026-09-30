@@ -39,6 +39,7 @@ def list_configs(experiment_name: str) -> None:
     table = Table(title=f"Configs for {experiment_name}")
     table.add_column("run_name")
     table.add_column("batch_size")
+    table.add_column("Model")
     table.add_column("optimizer")
     table.add_column("scheduler")
     table.add_column("obj_ids")
@@ -51,6 +52,7 @@ def list_configs(experiment_name: str) -> None:
         table.add_row(
             cfg["run_name"],
             str(setup_conf.get("batch_size", "")),
+            setup_conf["model_cls"].__name__,
             train_conf["optimizer_cls"].__name__,
             scheduler_cls.__name__ if scheduler_cls else "-",
             str(sorted(setup_conf.get("sel_obj_ids", []))),
@@ -110,7 +112,13 @@ def reset_runs(mlflow_names: set[str], run_names: set[str]) -> None:
                 console.print(f"Deleted run {row['tags.mlflow.runName']}")
 
 
-def run_flow(experiment_name: str, interactive: bool, run_all: bool) -> None:
+def run_flow(experiment_name: str | None, interactive: bool, run_all: bool) -> None:
+    if experiment_name is None:
+        for name in REGISTRY:
+            console.print(f"[bold cyan]Experiment: {name}[/bold cyan]")
+            run_flow(name, interactive=interactive, run_all=run_all)
+        return
+
     experiment = REGISTRY[experiment_name]
     done = existing_run_names(mlflow_experiment_names(experiment))
     configs = select_configs(
@@ -160,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.set_defaults(func=cmd_list)
 
     p_run = sub.add_parser("run")
-    p_run.add_argument("experiment", choices=list(REGISTRY.keys()))
+    p_run.add_argument("experiment", nargs="?", choices=list(REGISTRY.keys()))
     p_run.add_argument("--select", action="store_true")
     p_run.add_argument("--all", action="store_true")
     p_run.set_defaults(func=cmd_run)
@@ -193,7 +201,7 @@ def interactive_loop() -> None:
 
         elif action == "run":
             experiment_name = questionary.select(
-                "Experimento", choices=list(REGISTRY.keys())
+                "Experimento", choices=["(todos)"] + list(REGISTRY.keys())
             ).ask()
             if experiment_name is None:
                 continue
@@ -204,7 +212,7 @@ def interactive_loop() -> None:
             if mode is None:
                 continue
             run_flow(
-                experiment_name,
+                None if experiment_name == "(todos)" else experiment_name,
                 interactive=(mode == "seleccionar manualmente"),
                 run_all=(mode == "correr todo"),
             )
