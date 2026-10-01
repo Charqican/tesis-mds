@@ -2,7 +2,7 @@
 root = "/data/davvalen/lmo"
 
 [pbr]
-root = "/data/davvalen/bpr"
+root = "/data/davvalen/bpr/train_pbr"
 
 [training]
 root = "/data/davvalen/6dpose"
