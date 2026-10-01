@@ -226,7 +226,7 @@ MODEL_SPECS = [
 PATIENCE = 50
 MIN_DELTA = 0.0005
 
-BATCH_SIZES_CROSS = [128, 256]
+BATCH_SIZES_CROSS = [1024, 2048]
 
 # Adam and AdamW only (with and without scheduler)
 OPTIMIZER_SPECS_CROSS = [
@@ -348,7 +348,7 @@ REGISTRY: dict[str, Experiment] = {
             optimizer_specs=OPTIMIZER_SPECS_CROSS,
             patience=PATIENCE,
             min_delta=MIN_DELTA,
-            min_epochs=2000,
+            min_epochs=600,
         ),
     ),
     "exp3_cross_10": Experiment(
@@ -365,7 +365,7 @@ REGISTRY: dict[str, Experiment] = {
             optimizer_specs=OPTIMIZER_SPECS_CROSS,
             patience=PATIENCE,
             min_delta=MIN_DELTA,
-            min_epochs=2000,
+            min_epochs=600,
         ),
     ),
     "exp3_cross_11": Experiment(
@@ -382,7 +382,7 @@ REGISTRY: dict[str, Experiment] = {
             optimizer_specs=OPTIMIZER_SPECS_CROSS,
             patience=PATIENCE,
             min_delta=MIN_DELTA,
-            min_epochs=2000,
+            min_epochs=600,
         ),
     ),
 }
