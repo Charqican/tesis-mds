@@ -32,23 +32,33 @@ def _():
 
     lmo_root = Path("/mnt/data/dev/dataset/tesis/BOP/lmo/lmo")
     pbr_root = Path("/mnt/data/dev/dataset/tesis/BOP/pbr/lm_train_pbr/train_pbr/")
+    # Loader aliases for flexibility
     lmo_loader = LMOLoader.from_root(lmo_root)
     pbr_loader = PBRLoader.from_roots(pbr_root, lmo_root)
     loader = pbr_loader
+    test_loader = lmo_loader
+    train_loader = pbr_loader
 
     ROOT = Path("/mnt/data/dev/dataset/tesis/6dpose")
     # outlier-removed data
     POINTS_PT_DIR = ROOT / f"{loader.dataset_name}/cache/rm_outliers_20_2/points_pT/"
     FEATURES_INPUT_DIR = ROOT / f"{loader.dataset_name}/scalarfield_rm/training/input/"
     TARGET_DIR = ROOT / f"{loader.dataset_name}/scalarfield_rm/training/target/"
+    POINTS_PT_DIR_TEST = ROOT / f"{test_loader.dataset_name}/cache/rm_outliers_20_2/points_pT/"
+    TARGET_TEST = ROOT / f"{test_loader.dataset_name}/scalarfield_rm/training/target/"
+    FEATURES_INPUT_DIR_TEST = ROOT / f"{test_loader.dataset_name}/scalarfield_rm/training/input/"
 
     extracted_uids = {p.stem for p in POINTS_PT_DIR.glob("*.npz")}
     return (
         FEATURES_INPUT_DIR,
+        FEATURES_INPUT_DIR_TEST,
         POINTS_PT_DIR,
+        POINTS_PT_DIR_TEST,
         SCENE_ID,
         TARGET_DIR,
+        TARGET_TEST,
         extracted_uids,
+        lmo_loader,
         loader,
         mo,
         np,
@@ -97,10 +107,10 @@ def _(mo):
 
 
 @app.cell
-def _(loader):
+def _():
     from pose6d.dataset_stats import print_summary_table, _dataset_summary
 
-    print_summary_table(_dataset_summary(loader, 2))
+    #print_summary_table(_dataset_summary(loader, 2))
     return
 
 
@@ -346,6 +356,15 @@ def _(mo, ranked_runs):
     return (run_dropdown,)
 
 
+@app.cell
+def _(MlflowClient, run_dropdown):
+    _client = MlflowClient()
+    print(_client.get_run(run_dropdown.value).info.artifact_uri)
+    print([a.path for a in _client.list_artifacts(run_dropdown.value)])
+    _client.get_run(run_dropdown.value).data.metrics.keys()
+    return
+
+
 @app.cell(hide_code=True)
 def _(load_run, run_dropdown):
     run = load_run(run_dropdown.value)
@@ -356,12 +375,12 @@ def _(load_run, run_dropdown):
 @app.cell
 def _(MlflowClient, pd, plt, run, sns):
     _client = MlflowClient()
-    _train_hist = _client.get_metric_history(run.run_id, "loss")
-    _test_hist = _client.get_metric_history(run.run_id, "test_loss")
+    _train_hist = _client.get_metric_history(run.run_id, "train_loss")
+    _val_hist = _client.get_metric_history(run.run_id, "val_loss")
 
     df_loss = pd.DataFrame(
         [{"epoch": m.step, "loss": m.value, "split": "train"} for m in _train_hist]
-        + [{"epoch": m.step, "loss": m.value, "split": "test"} for m in _test_hist]
+        + [{"epoch": m.step, "loss": m.value, "split": "val"} for m in _val_hist]
     )
 
     _fig, _ax = plt.subplots(figsize=(7, 4))
@@ -383,9 +402,15 @@ def _(mo):
 
 
 @app.cell
-def _(instance_errors, loader, run):
+def _(run):
+    run.split_uids["test"]
+    return
+
+
+@app.cell
+def _(instance_errors, lmo_loader, loader, run):
     errors_test = instance_errors(
-        run, run.split_uids["test"], device="cuda", loader=loader
+        run, run.split_uids["test"], device="cuda", loader=lmo_loader
     )
     errors_train = instance_errors(
         run, run.split_uids["train"], device="cuda", loader=loader
@@ -463,6 +488,12 @@ def _(error_percentile_dropdown, errors_test, errors_train, split_dropdown):
 
 
 @app.cell
+def _(lmo_loader, loader, split_dropdown):
+    error_loader = lmo_loader if split_dropdown.value == "test" else loader
+    return (error_loader,)
+
+
+@app.cell
 def _(error_uid, point_errors, run):
     error_points, error_target, error_pred = point_errors(run, error_uid)
     return error_points, error_pred, error_target
@@ -533,18 +564,18 @@ def _(mo):
 
 @app.cell
 def _(
+    error_loader,
     error_points,
     error_pred,
     error_target,
     error_uid,
-    loader,
     plot_mesh_with_scalar_field,
 ):
-    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
-        error_uid
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = (
+        error_loader.parse_instance_uid(error_uid)
     )
     plot_mesh_with_scalar_field(
-        loader,
+        error_loader,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -569,18 +600,18 @@ def _(mo):
 
 @app.cell
 def _(
+    error_loader,
     error_points,
     error_pred,
     error_target,
     error_uid,
-    loader,
     plot_gt_vs_pred_comparison,
 ):
-    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
-        error_uid
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = (
+        error_loader.parse_instance_uid(error_uid)
     )
     plot_gt_vs_pred_comparison(
-        loader,
+        error_loader,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -594,22 +625,22 @@ def _(
 
 @app.cell
 def _(
-    FEATURES_INPUT_DIR,
-    POINTS_PT_DIR,
-    TARGET_DIR,
+    FEATURES_INPUT_DIR_TEST,
+    POINTS_PT_DIR_TEST,
+    TARGET_TEST,
+    error_loader,
     error_uid,
     load_instance_npz,
-    loader,
     plot_mesh_instance_with_dgedi_features,
 ):
-    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
-        error_uid
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = (
+        error_loader.parse_instance_uid(error_uid)
     )
     _points, _features, _, _ = load_instance_npz(
-        error_uid, POINTS_PT_DIR, FEATURES_INPUT_DIR, TARGET_DIR
+        error_uid, POINTS_PT_DIR_TEST, FEATURES_INPUT_DIR_TEST, TARGET_TEST
     )
     plot_mesh_instance_with_dgedi_features(
-        loader,
+        error_loader,
         _scene_id,
         _img_id,
         _inst_idx,
@@ -633,18 +664,18 @@ def _(mo):
 
 @app.cell
 def _(
+    error_loader,
     error_points,
     error_pred,
     error_target,
     error_uid,
-    loader,
     plot_gt_vs_pred_comparison_robust,
 ):
-    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = loader.parse_instance_uid(
-        error_uid
+    _dataset_name, _scene_id, _img_id, _obj_id, _inst_idx = (
+        error_loader.parse_instance_uid(error_uid)
     )
     plot_gt_vs_pred_comparison_robust(
-        loader,
+        error_loader,
         _scene_id,
         _img_id,
         _inst_idx,
