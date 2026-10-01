@@ -44,9 +44,7 @@ def main() -> None:
     canonical_cache: dict[int, tuple] = {}
     args.target.mkdir(parents=True, exist_ok=True)
 
-    pt_files = sorted(
-        args.points_pt.rglob(f"{loader.dataset_name}_scene{args.scene_id:06d}_*.npz")
-    )
+    pt_files = sorted(args.points_pt.rglob(f"{loader.dataset_name}*.npz"))
     if not pt_files:
         raise FileNotFoundError(f"No partial points found in {args.points_pt}.")
 
@@ -117,12 +115,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="scalarfield",
         help="name given to a subfolder containing the resulting artefacts. Default: scalarfield",
-    )
-    p.add_argument(
-        "--scene-id",
-        "-s",
-        type=int,
-        default=2,
     )
     p.add_argument(
         "--version-name",

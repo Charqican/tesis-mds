@@ -90,8 +90,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
     )
 
-    p.add_argument("--scene-id", "-s", type=int, default=10)
-
     p.add_argument("--batch-size", "-b", type=int, default=None)
 
     args = p.parse_args()
@@ -145,9 +143,7 @@ def main():
         args.root / args.dataset_type / args.experiment_name / "training" / "input"
     )
 
-    all_inputs = sorted(
-        points_pt_dir.rglob(f"{args.dataset_type}_scene{args.scene_id:06d}_*.npz")
-    )
+    all_inputs = sorted(points_pt_dir.rglob(f"{args.dataset_type}*.npz"))
     pending = (
         [p for p in all_inputs if not (features_input_dir / p.name).exists()]
         if SKIP_EXISTING
