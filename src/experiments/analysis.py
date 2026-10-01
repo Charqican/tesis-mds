@@ -49,22 +49,25 @@ def load_run(run_id: str) -> RunArtifacts:
     run = mlflow.get_run(run_id)
     params = run.data.params
 
-    points_pt_dir = Path(params["setup_conf.points_pt_dir"])
-    input_dir = Path(params["setup_conf.input_dir"])
-    target_dir = Path(params["setup_conf.target_dir"])
+    dirs_path = mlflow.artifacts.download_artifacts(
+        run_id=run_id, artifact_path="dirs_by_uid.json"
+    )
+    dirs_by_uid_raw = json.loads(Path(dirs_path).read_text())
+    dirs_by_uid = {
+        uid: (Path(d["points_dir"]), Path(d["input_dir"]), Path(d["target_dir"]))
+        for uid, d in dirs_by_uid_raw.items()
+    }
 
     split_path = mlflow.artifacts.download_artifacts(
         run_id=run_id, artifact_path="split.json"
     )
     split_uids = json.loads(Path(split_path).read_text())
 
-    dataset = SymmetryFieldInstanceDataset(
-        points_pt_dir,
-        input_dir,
-        target_dir,
-        uids=split_uids["train"] + split_uids["test"],
+    dataset = SymmetryFieldInstanceDataset.from_dirs_by_uid(dirs_by_uid)
+    dataset.assign_splits_explicit(
+        test_uids=set(split_uids["test"]),
+        val_uids=set(split_uids.get("val", [])),
     )
-    dataset.assign_splits_explicit(split_uids["test"])
     dataset.load()
 
     model = _unwrap(mlflowpy.load_model(f"runs:/{run_id}/model"))

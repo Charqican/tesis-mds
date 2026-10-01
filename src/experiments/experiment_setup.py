@@ -98,23 +98,30 @@ def setup_exp_cross(
     model_kwargs: dict | None,
     batch_size: int,
     sel_obj_ids: frozenset[int],
+    train_scene_ids: frozenset[int] | None = None,
     val_fraction: float = 0.15,
     seed: int = 123,
 ) -> TrainData:
     # Assigns train path and test path
     dataset = SymmetryFieldInstanceDataset.from_sources([train_source, test_source])
 
-    # filtering objects for inputs / targets
-    obj_condition = lambda uid, i: BOPLoader.parse_instance_uid(uid)[3] in sel_obj_ids
+    lmo_prefix = f"{LMOLoader.dataset_name}_"
+
+    # filtering objects (all sources) and scenes (train source only)
+    def obj_condition(uid, i):
+        _, scene_id, _, obj_id, _ = BOPLoader.parse_instance_uid(uid)
+        if obj_id not in sel_obj_ids:
+            return False
+        if train_scene_ids is not None and not uid.startswith(lmo_prefix):
+            return scene_id in train_scene_ids
+        return True
+
     obj_dataset: SymmetryFieldInstanceDataset = dataset.make_partition(obj_condition)
 
     # using all lmo as tests
     test_uids = set(
-        obj_dataset.uids_for_filtered(
-            lambda uid, _: uid.startswith(f"{LMOLoader.dataset_name}_")
-        )
+        obj_dataset.uids_for_filtered(lambda uid, _: uid.startswith(lmo_prefix))
     )
-
     # using all pbr as train
     train_pool = [uid for uid in obj_dataset.uid_list if uid not in test_uids]
 

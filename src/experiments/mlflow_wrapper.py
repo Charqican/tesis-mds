@@ -11,6 +11,7 @@ from pose6d.dataset import SymmetryFieldInstanceDataset
 from pose6d.loader import BOPLoader
 
 
+# TODO: Refactor all /experiments as it was vibecoded for time constraints
 def run_experiment(config: dict, setup_func, train_eng):
     mlflow.set_experiment(config["experiment_name"])
     with mlflow.start_run(run_name=config.get("run_name")):
@@ -25,6 +26,16 @@ def run_experiment(config: dict, setup_func, train_eng):
         model.eval()
 
         dataset: SymmetryFieldInstanceDataset = train_data.dataset
+
+        dirs_by_uid_serializable = {
+            uid: {
+                "points_dir": str(points_dir),
+                "input_dir": str(input_dir),
+                "target_dir": str(target_dir),
+            }
+            for uid, (points_dir, input_dir, target_dir) in dataset._dirs_by_uid.items()
+        }
+        mlflow.log_dict(dirs_by_uid_serializable, "dirs_by_uid.json")
 
         split_uids = {
             "train": dataset.uids_for("train"),

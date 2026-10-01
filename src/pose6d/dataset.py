@@ -60,6 +60,14 @@ class DatasetSource:
 class SymmetryFieldInstanceDataset(Dataset):
     _SPLIT_IDS = {"train": 0, "val": 1, "test": 2}
 
+    @classmethod
+    def from_dirs_by_uid(
+        cls, dirs_by_uid: dict[str, tuple[Path, Path, Path]]
+    ) -> "SymmetryFieldInstanceDataset":
+        self = cls.__new__(cls)
+        self._init_common(dirs_by_uid)
+        return self
+
     def __init__(
         self,
         points_dir: Path,
