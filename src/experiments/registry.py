@@ -228,13 +228,17 @@ MIN_DELTA = 0.0005
 
 BATCH_SIZES_CROSS = [128, 256]
 
+# Adam and AdamW only (with and without scheduler)
+OPTIMIZER_SPECS_CROSS = [
+    spec for spec in OPTIMIZER_SPECS if spec[0] in (torch.optim.Adam, torch.optim.AdamW)
+]
+
 MODEL_SPECS_CROSS = [
     (SymmetryFieldMLP5, {"dropout": 0.0}),
-    (SymmetryFieldMLP5, {"dropout": 0.1}),
     (SymmetryFieldMLP5, {"dropout": 0.2}),
     (SymmetryFieldMLP5, {"dropout": 0.3}),
-    (SymmetryFieldMLP3, None),
     (SymmetryFieldMLP4, None),
+    (SymmetryFieldMLP1, None),
 ]
 
 REGISTRY: dict[str, Experiment] = {
@@ -330,8 +334,8 @@ REGISTRY: dict[str, Experiment] = {
             min_epochs=10,
         ),
     ),
-    "exp3_bpr_train_lmo_test": Experiment(
-        name="exp3_bpr_train_lmo_test",
+    "exp3_cross_10_11": Experiment(
+        name="exp3_cross_10_11",
         setup_func=setup_exp_cross,
         train_eng=training_function,
         configs=build_configs_exp_synthetic(
@@ -341,7 +345,41 @@ REGISTRY: dict[str, Experiment] = {
             test_source=TEST_SOURCE_LMO,
             model_specs=MODEL_SPECS_CROSS,
             batch_sizes=BATCH_SIZES_CROSS,
-            optimizer_specs=OPTIMIZER_SPECS,
+            optimizer_specs=OPTIMIZER_SPECS_CROSS,
+            patience=PATIENCE,
+            min_delta=MIN_DELTA,
+            min_epochs=2000,
+        ),
+    ),
+    "exp3_cross_10": Experiment(
+        name="exp3_cross_10",
+        setup_func=setup_exp_cross,
+        train_eng=training_function,
+        configs=build_configs_exp_synthetic(
+            experiment_name="experiment_3_cross_server_10",
+            sel_obj_ids=frozenset({10}),
+            train_source=TRAIN_SOURCE_BPR,
+            test_source=TEST_SOURCE_LMO,
+            model_specs=MODEL_SPECS_CROSS,
+            batch_sizes=BATCH_SIZES_CROSS,
+            optimizer_specs=OPTIMIZER_SPECS_CROSS,
+            patience=PATIENCE,
+            min_delta=MIN_DELTA,
+            min_epochs=2000,
+        ),
+    ),
+    "exp3_cross_11": Experiment(
+        name="exp3_cross_11",
+        setup_func=setup_exp_cross,
+        train_eng=training_function,
+        configs=build_configs_exp_synthetic(
+            experiment_name="experiment_3_cross_server_11",
+            sel_obj_ids=frozenset({11}),
+            train_source=TRAIN_SOURCE_BPR,
+            test_source=TEST_SOURCE_LMO,
+            model_specs=MODEL_SPECS_CROSS,
+            batch_sizes=BATCH_SIZES_CROSS,
+            optimizer_specs=OPTIMIZER_SPECS_CROSS,
             patience=PATIENCE,
             min_delta=MIN_DELTA,
             min_epochs=2000,
