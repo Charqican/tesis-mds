@@ -100,7 +100,7 @@ class PTConfig:
     outliers: dict | None
     scenes: dict[str, tuple[int, ...]]  # dataset -> scene ids
 
-    # what must match between the toml and an existing version on disk
+    # saved in the manifests as metadata
     def params(self) -> dict:
         return {
             "min_visib": self.min_visib,
