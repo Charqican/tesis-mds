@@ -1,264 +1,269 @@
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable
 import random
+from dataclasses import dataclass, field
+
 import numpy as np
 import torch
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
+
+from pose6d.layout import DataLayout, uid_dataset
+from pose6d.loader import BOPLoader
 from logger import pose6d_dataset_logger as log
 
+"""
+Training data of an experiment ({root}/experiments/{experiment}/{input,target}).
+SymmetryFieldDataset is the entry point: it lists the uids on creation and loads the
+data when a split is assigned, fitting the normalizer on train only.
 
-# WARNING: inputs loading uses 'features', so this naming convention is implicit
-def load_instance_npz(
-    uid: str,
-    points_dir: Path,
-    input_dir: Path,
-    target_dir: Path,
-    expected_k: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    points_path = points_dir / f"{uid}.npz"
-    target_path = target_dir / f"{uid}.npz"
-    input_path = input_dir / f"{uid}.npz"
+    # training
+    ds = SymmetryFieldDataset(layout, "scalarfield_exp3", obj_ids={10, 11})
+    ds.split_by_dataset("lmo", val_frac=0.15)         # or split_random / assign_splits
+    DataLoader(ds.train, batch_size=1024, shuffle=True)
+    ds.splits.to_dict(), ds.normalizer.to_dict()      # save them with the model
 
-    if not (points_path.exists() and target_path.exists() and input_path.exists()):
-        raise FileNotFoundError(
-            f"Missing files for {uid}: points={points_path.exists()}, "
-            f"target={target_path.exists()}, inputs={input_path.exists()}"
-        )
-
-    points = np.load(points_path)["points"]
-    inp = np.load(input_path)["features"]
-    target = np.load(target_path)["target"]
-
-    if not (inp.shape[0] == target.shape[0] == points.shape[0]):
-        raise ValueError(
-            f"{uid}: input - target - points missalignment:\n"
-            f"- input :{inp.shape[0]}\n"
-            f"- target :{target.shape[0]}\n"
-            f"- points: {points.shape[0]}"
-        )
-
-    k = points.shape[0]
-    if expected_k is not None and k != expected_k:
-        raise ValueError(f"{uid}: has {k} points, expected {expected_k}")
-
-    return points, inp, target, k
+    # analysis of a trained model on partial local data
+    ds = SymmetryFieldDataset(layout, "scalarfield_exp3", normalizer=Normalizer.from_dict(saved))
+    ds.assign_splits(Splits.from_dict(saved_splits), skip_missing=True)
+    x, y = ds.test.get(uid)
+"""
+SPLIT_NAMES = ("train", "val", "test")
 
 
-# One dataset's worth of file locations. uids=None discovers every uid under
-# input_dir; an explicit list restricts to a subset (e.g. one scene for a
-# small local trial).
-@dataclass(frozen=True)
-class DatasetSource:
-    points_dir: Path
-    input_dir: Path
-    target_dir: Path
-    uids: list[str] | None = None
+@dataclass
+class Splits:
+    train: list[str] = field(default_factory=list)
+    val: list[str] = field(default_factory=list)
+    test: list[str] = field(default_factory=list)
 
+    def __post_init__(self):
+        sets = [set(self.train), set(self.val), set(self.test)]
+        if sum(map(len, sets)) != len(set.union(*sets)):
+            raise ValueError("train/val/test splits overlap")
 
-# INFO: a lot of raise blocks as this implementation is essentialy a state machine.
-class SymmetryFieldInstanceDataset(Dataset):
-    _SPLIT_IDS = {"train": 0, "val": 1, "test": 2}
+    @property
+    def is_empty(self) -> bool:
+        return not (self.train or self.val or self.test)
+
+    @staticmethod
+    def _shuffle_split(
+        uids: list[str], frac: float, seed: int
+    ) -> tuple[list[str], list[str]]:
+        shuffled = sorted(uids)
+        random.Random(seed).shuffle(shuffled)
+        n = int(len(shuffled) * frac)
+        return sorted(shuffled[n:]), sorted(shuffled[:n])
 
     @classmethod
-    def from_dirs_by_uid(
-        cls, dirs_by_uid: dict[str, tuple[Path, Path, Path]]
-    ) -> "SymmetryFieldInstanceDataset":
-        self = cls.__new__(cls)
-        self._init_common(dirs_by_uid)
+    def random(
+        cls, uids: list[str], val_frac: float, test_frac: float, seed: int = 123
+    ) -> "Splits":
+        rest, test = cls._shuffle_split(uids, test_frac, seed)
+        train, val = cls._shuffle_split(rest, val_frac / (1 - test_frac), seed)
+        return cls(train=train, val=val, test=test)
+
+    # e.g. train on pbr, test on every lmo instance
+    @classmethod
+    def by_dataset(
+        cls, uids: list[str], test_dataset: str, val_frac: float, seed: int = 123
+    ) -> "Splits":
+        test = [u for u in uids if uid_dataset(u) == test_dataset]
+        rest = [u for u in uids if uid_dataset(u) != test_dataset]
+        train, val = cls._shuffle_split(rest, val_frac, seed)
+        return cls(train=train, val=val, test=test)
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {"train": self.train, "val": self.val, "test": self.test}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, list[str]]) -> "Splits":
+        return cls(train=d["train"], val=d.get("val", []), test=d["test"])
+
+
+class Normalizer:
+    """Per channel input and scalar target standardization. Unfitted until fit()."""
+
+    def __init__(self):
+        self.input_mean: torch.Tensor | None = None  # (D,)
+        self.input_std: torch.Tensor | None = None
+        self.target_mean: float | None = None
+        self.target_std: float | None = None
+
+    @property
+    def is_fitted(self) -> bool:
+        return self.input_mean is not None
+
+    def fit(self, inputs: torch.Tensor, targets: torch.Tensor) -> "Normalizer":
+        flat = inputs.reshape(-1, inputs.shape[-1])
+        self.input_mean = flat.mean(dim=0)
+        self.input_std = flat.std(dim=0, unbiased=False).clamp(min=1e-6)
+        self.target_mean = targets.mean().item()
+        self.target_std = max(targets.std(unbiased=False).item(), 1e-6)
         return self
+
+    def inputs(self, x: torch.Tensor) -> torch.Tensor:
+        return (x - self.input_mean) / self.input_std
+
+    def targets(self, y: torch.Tensor) -> torch.Tensor:
+        return (y - self.target_mean) / self.target_std
+
+    def denormalize_targets(self, y: torch.Tensor) -> torch.Tensor:
+        return y * self.target_std + self.target_mean
+
+    def to_dict(self) -> dict:
+        return {
+            "input_mean": self.input_mean.tolist(),
+            "input_std": self.input_std.tolist(),
+            "target_mean": self.target_mean,
+            "target_std": self.target_std,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Normalizer":
+        norm = cls()
+        norm.input_mean = torch.tensor(d["input_mean"])
+        norm.input_std = torch.tensor(d["input_std"])
+        norm.target_mean = float(d["target_mean"])
+        norm.target_std = float(d["target_std"])
+        return norm
+
+
+class SplitData(Dataset):
+    """Normalized (input, target) pairs of one split, what DataLoader iterates."""
+
+    def __init__(self, uids: list[str], inputs: torch.Tensor, targets: torch.Tensor):
+        self.uids = uids
+        self.inputs = inputs  # (N, K, D)
+        self.targets = targets  # (N, K)
+        self._index = {u: i for i, u in enumerate(uids)}
+
+    def __len__(self) -> int:
+        return len(self.uids)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.inputs[idx], self.targets[idx]
+
+    def get(self, uid: str) -> tuple[torch.Tensor, torch.Tensor]:
+        return self[self._index[uid]]
+
+
+class SymmetryFieldDataset:
+    """
+    uids of an experiment, optionally filtered by object and {dataset: scenes}.
+    Nothing is loaded until a split is assigned; train/val/test fail before that.
+    A given normalizer (e.g. a trained model's) is used as is, otherwise one is
+    fitted on the train split every time splits are assigned.
+    """
 
     def __init__(
         self,
-        points_dir: Path,
-        input_dir: Path,
-        target_dir: Path,
-        uids: list[str] | None = None,
+        layout: DataLayout,
+        experiment: str,
+        obj_ids: set[int] | None = None,
+        scenes: dict[str, set[int]] | None = None,
+        normalizer: Normalizer | None = None,
     ):
-        all_uids = sorted(p.stem for p in input_dir.rglob("*.npz"))
-        if not all_uids:
-            raise FileNotFoundError(f"No .npz file found in {input_dir}")
+        self.input_dir = layout.input_dir(experiment)
+        self.target_dir = layout.target_dir(experiment)
+        self.uids = []
+        for path in sorted(self.target_dir.glob("*.npz")):
+            dataset, scene_id, _, obj_id, _ = BOPLoader.parse_instance_uid(path.stem)
+            if obj_ids is not None and obj_id not in obj_ids:
+                continue
+            if scenes is not None and scene_id not in scenes.get(dataset, ()):
+                continue
+            self.uids.append(path.stem)
 
-        uid_list = uids if uids is not None else all_uids
-        dirs_by_uid = {uid: (points_dir, input_dir, target_dir) for uid in uid_list}
-        self._init_common(dirs_by_uid)
+        self._fit_normalizer = normalizer is None
+        self.normalizer = normalizer or Normalizer()
+        self.splits = Splits()
+        self._data: dict[str, SplitData] = {}
 
-    @classmethod
-    def from_sources(
-        cls, sources: list[DatasetSource]
-    ) -> "SymmetryFieldInstanceDataset":
-        dirs_by_uid: dict[str, tuple[Path, Path, Path]] = {}
-        for source in sources:
-            uids = source.uids
-            if uids is None:
-                uids = sorted(p.stem for p in source.input_dir.rglob("*.npz"))
-                if not uids:
-                    raise FileNotFoundError(f"No .npz file found in {source.input_dir}")
-            for uid in uids:
-                if uid in dirs_by_uid:
-                    raise ValueError(f"duplicate uid across sources: {uid}")
-                dirs_by_uid[uid] = (
-                    source.points_dir,
-                    source.input_dir,
-                    source.target_dir,
+    # --- split assignment (loads the data)
+    def split_random(self, val_frac: float, test_frac: float, seed: int = 123) -> None:
+        self.assign_splits(Splits.random(self.uids, val_frac, test_frac, seed))
+
+    def split_by_dataset(
+        self, test_dataset: str, val_frac: float, seed: int = 123
+    ) -> None:
+        self.assign_splits(Splits.by_dataset(self.uids, test_dataset, val_frac, seed))
+
+    def assign_splits(self, splits: Splits, skip_missing: bool = False) -> None:
+        """skip_missing drops uids not on disk (e.g. a server split on partial local data)."""
+        if skip_missing:
+            splits = Splits(
+                **{n: self._present(getattr(splits, n)) for n in SPLIT_NAMES}
+            )
+        if splits.is_empty:
+            raise ValueError("splits are empty")
+
+        raw = {
+            n: self._load(getattr(splits, n)) for n in SPLIT_NAMES if getattr(splits, n)
+        }
+        if self._fit_normalizer:
+            if "train" not in raw:
+                raise ValueError(
+                    "no train split to fit the normalizer, pass one instead"
                 )
+            self.normalizer = Normalizer().fit(*raw["train"])
 
-        self = cls.__new__(cls)
-        self._init_common(dirs_by_uid)
-        return self
+        self.splits = splits
+        self._data = {
+            n: SplitData(
+                getattr(splits, n),
+                self.normalizer.inputs(x),
+                self.normalizer.targets(y),
+            )
+            for n, (x, y) in raw.items()
+        }
 
-    def _init_common(self, dirs_by_uid: dict[str, tuple[Path, Path, Path]]) -> None:
-        self._dirs_by_uid = dirs_by_uid
-        self.uid_list = list(dirs_by_uid.keys())
-        self.split = torch.full((len(self.uid_list),), -1, dtype=torch.long)
+    # --- access
+    @property
+    def train(self) -> SplitData:
+        return self._split("train")
 
-        self._splits_assigned = False
-        self._loaded = False
+    @property
+    def val(self) -> SplitData:
+        return self._split("val")
 
-        self.points = None
-        self.input_raw = None
-        self.targets_raw = None
-        self.input = None
-        self.targets = None
-        self.target_mean = torch.tensor(0.0)
-        self.target_std = torch.tensor(1.0)
-        self.input_mean = None
-        self.input_std = None
+    @property
+    def test(self) -> SplitData:
+        return self._split("test")
 
-    def __len__(self) -> int:
-        return len(self.uid_list)
-
-    def __getitem__(self, idx: int):
-        if not self._loaded:
-            raise RuntimeError("call load() first")
-        return self.input[idx], self.targets[idx]
-
-    def assign_splits_explicit(
-        self,
-        test_uids: set[str],
-        val_uids: set[str] | None = None,
-    ) -> None:
-        val_uids = val_uids or set()
-        for i, uid in enumerate(self.uid_list):
-            if uid in test_uids:
-                self.split[i] = 2
-            elif uid in val_uids:
-                self.split[i] = 1
-            else:
-                self.split[i] = 0
-        self._splits_assigned = True
-
-    def assign_splits_random(
-        self,
-        fractions: tuple[float, float] | tuple[float, float, float],
-        seed: int = 1234,
-    ) -> None:
-        rng = random.Random(seed)
-        uids = list(self.uid_list)
-        rng.shuffle(uids)
-        n = len(uids)
-
-        if len(fractions) == 2:
-            _, test_frac = fractions
-            n_test = int(n * test_frac)
-            test_uids = set(uids[:n_test])
-            val_uids = set()
-        else:
-            _, val_frac, test_frac = fractions
-            n_test = int(n * test_frac)
-            n_val = int(n * val_frac)
-            test_uids = set(uids[:n_test])
-            val_uids = set(uids[n_test : n_test + n_val])
-
-        self.assign_splits_explicit(test_uids, val_uids)
-
-    def load(self) -> None:
-        if not self._splits_assigned:
+    def _split(self, name: str) -> SplitData:
+        if self.splits.is_empty:
             raise RuntimeError(
-                "call assign_splits_explicit or assign_splits_random before load()"
+                "no split assigned: call split_random, split_by_dataset or assign_splits"
             )
-        if self._loaded:
-            return
+        if name not in self._data:
+            raise KeyError(f"split '{name}' is empty")
+        return self._data[name]
 
-        all_points, all_input, all_targets = [], [], []
-        expected_k = None
-        for uid in self.uid_list:
-            points_dir, input_dir, target_dir = self._dirs_by_uid[uid]
-            points, inp, target, expected_k = load_instance_npz(
-                uid, points_dir, input_dir, target_dir, expected_k
+    # --- io
+    # WARNING: inputs are saved under 'features' and targets under 'target'
+    def _load(self, uids: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
+        inputs, targets = [], []
+        for uid in uids:
+            inp = np.load(self.input_dir / f"{uid}.npz")["features"]
+            target = np.load(self.target_dir / f"{uid}.npz")["target"]
+            if inp.shape[0] != target.shape[0]:
+                raise ValueError(
+                    f"{uid}: {inp.shape[0]} input points vs {target.shape[0]} target points"
+                )
+            inputs.append(inp)
+            targets.append(target)
+        return (
+            torch.from_numpy(np.stack(inputs)).float(),
+            torch.from_numpy(np.stack(targets)).float(),
+        )
+
+    def _present(self, uids: list[str]) -> list[str]:
+        present = [
+            u
+            for u in uids
+            if (self.input_dir / f"{u}.npz").exists()
+            and (self.target_dir / f"{u}.npz").exists()
+        ]
+        if len(present) < len(uids):
+            log.warning(
+                f"{len(uids) - len(present)} of {len(uids)} uids not on disk, skipped"
             )
-            all_points.append(points)
-            all_input.append(inp)
-            all_targets.append(target)
-
-        self.points = torch.from_numpy(np.stack(all_points, axis=0)).float()
-        self.input_raw = torch.from_numpy(np.stack(all_input, axis=0)).float()
-        self.targets_raw = torch.from_numpy(np.stack(all_targets, axis=0)).float()
-        self.input = self.input_raw
-        self.targets = self.targets_raw
-        self.input_mean = torch.zeros(self.input_raw.shape[-1])
-        self.input_std = torch.ones(self.input_raw.shape[-1])
-
-        self._normalize()
-        self._loaded = True
-
-    def _normalize(self) -> None:
-        train_mask = self.split == 0
-        if train_mask.sum() == 0:
-            return
-
-        train_targets = self.targets_raw[train_mask]
-        self.target_mean = train_targets.mean()
-        self.target_std = torch.clamp(train_targets.std(unbiased=False), min=1e-6)
-        self.targets = (self.targets_raw - self.target_mean) / self.target_std
-
-        train_input = self.input_raw[train_mask]
-        flat = train_input.reshape(-1, train_input.shape[-1])
-        self.input_mean = flat.mean(dim=0)
-        self.input_std = torch.clamp(flat.std(dim=0, unbiased=False), min=1e-6)
-        self.input = (self.input_raw - self.input_mean) / self.input_std
-
-    def denormalize(self, pred_normalized: torch.Tensor) -> torch.Tensor:
-        return pred_normalized * self.target_std + self.target_mean
-
-    def denormalize_input(self, input_normalized: torch.Tensor) -> torch.Tensor:
-        return input_normalized * self.input_std + self.input_mean
-
-    def get_instance(self, uid: str):
-        if not self._loaded:
-            raise RuntimeError("call load() first")
-        idx = self.uid_list.index(uid)
-        return self.points[idx], self.input[idx], self.targets_raw[idx]
-
-    def indices_for(self, name: str) -> list[int]:
-        if name not in self._SPLIT_IDS:
-            raise ValueError(f"unknown split name: {name}")
-        return (self.split == self._SPLIT_IDS[name]).nonzero(as_tuple=True)[0].tolist()
-
-    def uids_for(self, name: str) -> list[str]:
-        return [self.uid_list[i] for i in self.indices_for(name)]
-
-    def get_split(self, name: str) -> Subset:
-        if not self._loaded:
-            raise RuntimeError("call load() first")
-        return Subset(self, self.indices_for(name))
-
-    def uids_for_filtered(self, predicate: Callable[[str, int], bool]) -> list[str]:
-        return [uid for i, uid in enumerate(self.uid_list) if predicate(uid, i)]
-
-    def get_partition(self, predicate: Callable[[str, int], bool]) -> Subset:
-        if not self._loaded:
-            raise RuntimeError("call load() first")
-        indices = [i for i, uid in enumerate(self.uid_list) if predicate(uid, i)]
-        return Subset(self, indices)
-
-    def make_partition(
-        self, predicate: Callable[[str, int], bool]
-    ) -> "SymmetryFieldInstanceDataset":
-        if self._loaded:
-            raise RuntimeError("dataset already loaded, use get_partition instead")
-        uids = self.uids_for_filtered(predicate)
-        dirs_by_uid = {uid: self._dirs_by_uid[uid] for uid in uids}
-        new = SymmetryFieldInstanceDataset.__new__(SymmetryFieldInstanceDataset)
-        new._init_common(dirs_by_uid)
-        return new
+        return present
