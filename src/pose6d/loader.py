@@ -5,9 +5,11 @@ import numpy as np
 import torch
 import cv2
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterator
 import json
+import os
 
 """
 1. This file contains dataclasses as interfaces to decouple the path resolver & dataloader from the dataset and its schema.
@@ -273,9 +275,7 @@ class BOPLoader:
 
     # --- internal parsers ---
     def _load_json_int_keys(self, path: Path) -> dict:
-        with open(path, "r") as f:
-            raw = json.load(f)
-        return {int(k): v for k, v in raw.items()}
+        return _read_json_int_keys(path)
 
     def _parse_symmetry_matrix(self, symm_matrix: list[float]) -> SymmetryData:
         M = np.array(symm_matrix, dtype=np.float64).reshape(4, 4)
@@ -333,6 +333,15 @@ class PBRLoader(BOPLoader):
         return cls(PBRConfig.from_roots(root, model_root))
 
 
+# Scene jsons are re-read for every instance otherwise (slow on pbr scenes).
+# Returned dicts are shared between callers: treat them as read-only.
+@lru_cache(maxsize=32)
+def _read_json_int_keys(path: Path) -> dict:
+    with open(path, "r") as f:
+        raw = json.load(f)
+    return {int(k): v for k, v in raw.items()}
+
+
 # Simple utility function for loading models
 def build_loader(
     dataset_type: str,
@@ -346,3 +355,17 @@ def build_loader(
             raise ValueError("BPR requires model_root")
         return PBRLoader.from_roots(dataset_root, model_root)
     raise ValueError(f"Unknown dataset type: {dataset_type}")
+
+
+# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT).
+# pbr uses the lmo object models.
+def loader_from_env(dataset_type: str) -> BOPLoader:
+    def env(var: str) -> str:
+        value = os.environ.get(var)
+        if not value:
+            raise ValueError(f"Environment variable {var} not set (see .env-example)")
+        return value
+
+    if dataset_type == "pbr":
+        return build_loader("pbr", env("PBR_ROOT"), env("LMO_ROOT"))
+    return build_loader(dataset_type, env("LMO_ROOT"))
