@@ -8,13 +8,13 @@ from logger import experiments_logger as log
 SPLITS_DIR = CONFIGS_DIR / "splits"
 
 
-def load_splits(layout: DataLayout, experiment: str, name: str) -> Splits:
-    """Saved split of a data experiment, made from all its uids the first time."""
-    path = SPLITS_DIR / experiment / f"{name}.json"
+def load_splits(layout: DataLayout, version: str, name: str) -> Splits:
+    """Saved split of a version, made from all its uids the first time."""
+    path = SPLITS_DIR / version / f"{name}.json"
     if path.exists():
         return Splits.load(path)
 
-    splits = SPLITS[name](SymmetryFieldDataset(layout, experiment).uids)
+    splits = SPLITS[name](SymmetryFieldDataset(layout, version).uids)
     if not (splits.train and splits.val and splits.test):
         raise ValueError(f"split {name!r} has an empty part, not saving it")
     splits.save(path)
@@ -30,11 +30,11 @@ def setup(
     scenes = data["scenes"]
     ds = SymmetryFieldDataset(
         layout,
-        data["experiment"],
+        data["version"],
         obj_ids=set(data["obj_ids"]),
         scenes={d: set(s) for d, s in scenes.items()} if scenes else None,
     )
-    splits = load_splits(layout, data["experiment"], data["split"])
+    splits = load_splits(layout, data["version"], data["split"])
     ds.assign_splits(splits.subset(ds.uids))
 
     in_dim = ds.train.inputs.shape[-1]

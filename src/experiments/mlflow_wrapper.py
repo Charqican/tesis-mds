@@ -6,11 +6,11 @@ import mlflow
 import pandas as pd
 import torch
 
+from experiments.analysis import uid_info
 from experiments.experiment_setup import setup
 from experiments.experiment_training import instance_losses, predict, train
 from pose6d.dataset import SPLIT_NAMES, SymmetryFieldDataset
 from pose6d.layout import DataLayout
-from pose6d.loader import BOPLoader, loader_from_env
 from logger import experiments_logger as log
 
 """
@@ -96,44 +96,31 @@ def run_experiment(config: dict, layout: DataLayout) -> None:
 def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.DataFrame:
     """One row per uid of every split. loss is normalized, the rest in target units."""
     device = next(model.parameters()).device
-    loaders: dict[str, BOPLoader] = {}
-    rows = []
+    frames = []
     for split_name in SPLIT_NAMES:
         if not getattr(ds.splits, split_name):
             continue
         split = getattr(ds, split_name)
         pred_norm = predict(model, split, device)
-        losses = instance_losses(pred_norm, split.targets)
         pred = ds.normalizer.denormalize_targets(pred_norm)
         target = ds.normalizer.denormalize_targets(split.targets)
         error = pred - target
-
-        for i, uid in enumerate(split.uids):
-            dataset, scene_id, img_id, obj_id, inst_idx = BOPLoader.parse_instance_uid(
-                uid
-            )
-            if dataset not in loaders:
-                loaders[dataset] = loader_from_env(dataset)
-            instance = loaders[dataset].load_instances(scene_id, img_id)[inst_idx]
-            rows.append(
+        frames.append(
+            pd.DataFrame(
                 {
-                    "uid": uid,
+                    "uid": split.uids,
                     "split": split_name,
-                    "dataset": dataset,
-                    "scene_id": scene_id,
-                    "img_id": img_id,
-                    "obj_id": obj_id,
-                    "inst_idx": inst_idx,
-                    "visib_fract": instance.visible_fract,
-                    "loss": losses[i].item(),
-                    "rmse": error[i].pow(2).mean().sqrt().item(),
-                    "mae": error[i].abs().mean().item(),
-                    "bias": error[i].mean().item(),
-                    "target_mean": target[i].mean().item(),
-                    "pred_mean": pred[i].mean().item(),
+                    "loss": instance_losses(pred_norm, split.targets).numpy(),
+                    "rmse": error.pow(2).mean(dim=1).sqrt().numpy(),
+                    "mae": error.abs().mean(dim=1).numpy(),
+                    "bias": error.mean(dim=1).numpy(),
+                    "target_mean": target.mean(dim=1).numpy(),
+                    "pred_mean": pred.mean(dim=1).numpy(),
                 }
             )
-    return pd.DataFrame(rows)
+        )
+    metrics = pd.concat(frames, ignore_index=True)
+    return uid_info(metrics["uid"].tolist()).merge(metrics, on="uid")
 
 
 def flatten(d: dict, parent_key: str = "", sep: str = ".") -> dict:

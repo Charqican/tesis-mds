@@ -16,13 +16,13 @@ from pose6d.model import (
 """
 Experiments for the CLI (scripts/run_experiments.py). An Experiment is a list of run
 configs, each one a plain dict:
-    data:  data experiment ({root}/experiments/{experiment}), split name, obj_ids, scenes
+    data:  preprocessing version ({root}/versions/{version}), split name, obj_ids, scenes
     model: model class + kwargs
     train: batch size, optimizer, scheduler, early stopping, seed
 
 """
 
-DATA_EXPERIMENT = "scalarfield_exp3"
+DATA_VERSION = "scalarfield_exp3"
 
 # Splits are static to compare them between runs and experiments
 SPLITS = {
@@ -52,7 +52,7 @@ def build_configs(
     batch_sizes: list[int],
     optimizer_specs: list[tuple[type, dict | None, type | None, dict | None]],
     scenes: dict[str, set[int]] | None = None,
-    data_experiment: str = DATA_EXPERIMENT,
+    data_version: str = DATA_VERSION,
     seed: int = 0,
     **train_kwargs,
 ) -> list[dict]:
@@ -77,7 +77,7 @@ def build_configs(
                     f"_bs{batch_size}_{opt_cls.__name__}_{sched_tag}"
                 ),
                 "data": {
-                    "experiment": data_experiment,
+                    "version": data_version,
                     "split": split,
                     "obj_ids": sorted(obj_ids),
                     "scenes": scenes,
