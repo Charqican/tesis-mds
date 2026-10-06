@@ -64,7 +64,7 @@ class BOPPath:
 @dataclass(frozen=True)
 class LMOPath(BOPPath):
     """
-    Expected file structure lmo/
+    Expected file structure lmo
     - models/
     - models_eval/
     - test/

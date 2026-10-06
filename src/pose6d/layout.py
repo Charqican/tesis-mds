@@ -11,10 +11,10 @@ This file exist because there were a lot of paths to manage between server - loc
 This is the Layout expected and used by every other object:
     {root}/{dataset}/cache/{pT}/points_pT/{uid}.npz
     {root}/{dataset}/cache/{pT}/manifest.json
-    {root}/experiments/{experiment}/input/{uid}.npz      (dgedi features)
-    {root}/experiments/{experiment}/target/{uid}.npz     (symmetry field)
-    {root}/experiments/{experiment}/manifest.json
-    {root}/experiments/{experiment}/dgedi_inputs.txt     (pending dgedi work list)
+    {root}/versions/{version}/input/{uid}.npz      (dgedi features)
+    {root}/versions/{version}/target/{uid}.npz     (symmetry field)
+    {root}/versions/{version}/manifest.json
+    {root}/versions/{version}/dgedi_inputs.txt     (pending dgedi work list)
 
 - DataLayout is very similar to loader.py, as it resolves paths and abstract the logic.
 - PTCofing and SymmConfig parses tomls configurations. Their use is restricted to dataset creation and verisioning
@@ -58,21 +58,21 @@ class DataLayout:
     def points_path(self, pT: str, uid: str) -> Path:
         return self.points_dir(uid_dataset(uid), pT) / f"{uid}.npz"
 
-    # --- experiments (datasets mixed, uids are prefixed by dataset) ---
-    def experiment_dir(self, experiment: str) -> Path:
-        return self.root / "experiments" / experiment
+    # --- preprocessing versions (datasets mixed, uids are prefixed by dataset) ---
+    def version_dir(self, version: str) -> Path:
+        return self.root / "versions" / version
 
-    def input_dir(self, experiment: str) -> Path:
-        return self.experiment_dir(experiment) / "input"
+    def input_dir(self, version: str) -> Path:
+        return self.version_dir(version) / "input"
 
-    def target_dir(self, experiment: str) -> Path:
-        return self.experiment_dir(experiment) / "target"
+    def target_dir(self, version: str) -> Path:
+        return self.version_dir(version) / "target"
 
-    def experiment_manifest(self, experiment: str) -> Path:
-        return self.experiment_dir(experiment) / "manifest.json"
+    def version_manifest(self, version: str) -> Path:
+        return self.version_dir(version) / "manifest.json"
 
-    def dgedi_inputs(self, experiment: str) -> Path:
-        return self.experiment_dir(experiment) / "dgedi_inputs.txt"
+    def dgedi_inputs(self, version: str) -> Path:
+        return self.version_dir(version) / "dgedi_inputs.txt"
 
 
 # accepts formats like: 3, [2, 3], "0-49" or "0-9,12"

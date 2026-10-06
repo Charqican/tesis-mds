@@ -12,7 +12,7 @@ from pose6d.loader import BOPLoader
 from logger import pose6d_dataset_logger as log
 
 """
-Training data of an experiment ({root}/experiments/{experiment}/{input,target}).
+Training data of a preprocessing version ({root}/versions/{version}/{input,target}).
 SymmetryFieldDataset is the entry point: it lists the uids on creation and loads the
 data when a split is assigned, fitting the normalizer on train only.
 
@@ -184,7 +184,7 @@ class SplitData(Dataset):
 
 class SymmetryFieldDataset:
     """
-    uids of an experiment, optionally filtered by object and {dataset: scenes}.
+    uids of a version, optionally filtered by object and {dataset: scenes}.
     Nothing is loaded until a split is assigned; train/val/test fail before that.
     A given normalizer (e.g. a trained model's) is used as is, otherwise one is
     fitted on the train split every time splits are assigned.
@@ -193,13 +193,13 @@ class SymmetryFieldDataset:
     def __init__(
         self,
         layout: DataLayout,
-        experiment: str,
+        version: str,
         obj_ids: set[int] | None = None,
         scenes: dict[str, set[int]] | None = None,
         normalizer: Normalizer | None = None,
     ):
-        self.input_dir = layout.input_dir(experiment)
-        self.target_dir = layout.target_dir(experiment)
+        self.input_dir = layout.input_dir(version)
+        self.target_dir = layout.target_dir(version)
         self.uids = []
         for path in sorted(self.target_dir.glob("*.npz")):
             dataset, scene_id, _, obj_id, _ = BOPLoader.parse_instance_uid(path.stem)
