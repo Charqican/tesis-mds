@@ -1,18 +1,35 @@
-from pathlib import Path
-
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import trimesh
 from sklearn.decomposition import PCA
 
-from pose6d.config import LMOConfig
 from pose6d.loader import BOPLoader
 from pose6d.geometry_utils import backproject_depth, transform_points
 from pose6d.preprocessing import extract_instances_pcs
+
+
+def _posed_mesh(loader: BOPLoader, scene_id: int, img_id: int, inst_idx: int):
+    """(obj_id, posed vertices, faces) of one instance of a frame."""
+    instance = loader.load_instances(scene_id, img_id)[inst_idx]
+    mesh = trimesh.load(loader.cfg.paths.model_path(instance.obj_id))
+    return (
+        instance.obj_id,
+        transform_points(mesh.vertices, instance.R, instance.t),
+        mesh.faces,
+    )
+
+
+def _mesh_trace(vertices: np.ndarray, faces: np.ndarray, **kwargs) -> go.Mesh3d:
+    return go.Mesh3d(
+        x=vertices[:, 0],
+        y=vertices[:, 1],
+        z=-vertices[:, 2],
+        i=faces[:, 0],
+        j=faces[:, 1],
+        k=faces[:, 2],
+        **kwargs,
+    )
 
 
 def plot_frame_meshes_and_sensor(
@@ -36,21 +53,14 @@ def plot_frame_meshes_and_sensor(
         )
     ]
 
-    instances = loader.load_instances(scene_id, img_id)
-    for inst_idx, instance in enumerate(instances):
-        mesh = trimesh.load(config.paths.model_path(instance.obj_id))
-        posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
-        faces = mesh.faces
+    for inst_idx in range(len(loader.load_instances(scene_id, img_id))):
+        obj_id, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
         traces.append(
-            go.Mesh3d(
-                x=posed_vertices[:, 0],
-                y=posed_vertices[:, 1],
-                z=-posed_vertices[:, 2],
-                i=faces[:, 0],
-                j=faces[:, 1],
-                k=faces[:, 2],
+            _mesh_trace(
+                vertices,
+                faces,
                 opacity=1,
-                name=f"obj_{instance.obj_id} (inst {inst_idx})",
+                name=f"obj_{obj_id} (inst {inst_idx})",
                 showlegend=True,
             )
         )
@@ -67,22 +77,11 @@ def plot_frame_meshes_and_sensor(
 def plot_mesh_instance_visible(
     loader: BOPLoader, scene_id: int, img_id: int, inst_idx: int
 ) -> go.Figure:
-    config = loader.cfg
-    instance = loader.load_instances(scene_id, img_id)[inst_idx]
-    obj_id = instance.obj_id
-
-    mesh = trimesh.load(config.paths.model_path(obj_id))
-    posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
-    faces = mesh.faces
-
+    obj_id, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
     traces = [
-        go.Mesh3d(
-            x=posed_vertices[:, 0],
-            y=posed_vertices[:, 1],
-            z=-posed_vertices[:, 2],
-            i=faces[:, 0],
-            j=faces[:, 1],
-            k=faces[:, 2],
+        _mesh_trace(
+            vertices,
+            faces,
             opacity=0.7,
             name=f"obj : {obj_id} (instance {inst_idx})",
             showlegend=True,
@@ -124,22 +123,11 @@ def plot_mesh_with_scalar_field(
     colorscale: str = "Viridis",
     colorbar_title: str = "value",
 ) -> go.Figure:
-    config = loader.cfg
-    instance = loader.load_instances(scene_id, img_id)[inst_idx]
-    obj_id = instance.obj_id
-
-    mesh = trimesh.load(config.paths.model_path(obj_id))
-    posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
-    faces = mesh.faces
-
+    obj_id, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
     traces = [
-        go.Mesh3d(
-            x=posed_vertices[:, 0],
-            y=posed_vertices[:, 1],
-            z=-posed_vertices[:, 2],
-            i=faces[:, 0],
-            j=faces[:, 1],
-            k=faces[:, 2],
+        _mesh_trace(
+            vertices,
+            faces,
             opacity=0.7,
             name=f"obj : {obj_id} (instance {inst_idx})",
             showlegend=True,
@@ -211,26 +199,16 @@ def plot_mesh_instance_with_dgedi_features(
     show_mesh: bool = True,
     percentiles: tuple[float, float] = (2.0, 98.0),
 ) -> go.Figure:
-    config = loader.cfg
-    instance = loader.load_instances(scene_id, img_id)[inst_idx]
-    obj_id = instance.obj_id
-
+    obj_id, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
     colors, inside, evr = features_to_rgb(features, reference, percentiles=percentiles)
     outside = ~inside
 
     traces = []
     if show_mesh:
-        mesh = trimesh.load(config.paths.model_path(obj_id))
-        posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
-        faces = mesh.faces
         traces.append(
-            go.Mesh3d(
-                x=posed_vertices[:, 0],
-                y=posed_vertices[:, 1],
-                z=-posed_vertices[:, 2],
-                i=faces[:, 0],
-                j=faces[:, 1],
-                k=faces[:, 2],
+            _mesh_trace(
+                vertices,
+                faces,
                 opacity=0.3,
                 name=f"obj : {obj_id} (instance {inst_idx})",
                 showlegend=True,
@@ -324,7 +302,6 @@ def plot_gt_vs_pred_comparison(
     title: str = "",
     colorscale: str = "Viridis",
 ) -> go.Figure:
-    config = loader.cfg
     points = np.asarray(points)
     target = np.asarray(target)
     pred = np.asarray(pred)
@@ -332,22 +309,11 @@ def plot_gt_vs_pred_comparison(
     cmin = float(min(target.min(), pred.min()))
     cmax = float(max(target.max(), pred.max()))
 
-    instance = loader.load_instances(scene_id, img_id)[inst_idx]
-    mesh = trimesh.load(config.paths.model_path(instance.obj_id))
-    posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
-    faces = mesh.faces
+    _, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
 
-    def _mesh_trace():
-        return go.Mesh3d(
-            x=posed_vertices[:, 0],
-            y=posed_vertices[:, 1],
-            z=-posed_vertices[:, 2],
-            i=faces[:, 0],
-            j=faces[:, 1],
-            k=faces[:, 2],
-            opacity=0.3,
-            color="orange",
-            showlegend=False,
+    def _mesh():
+        return _mesh_trace(
+            vertices, faces, opacity=0.3, color="orange", showlegend=False
         )
 
     fig = make_subplots(
@@ -356,7 +322,7 @@ def plot_gt_vs_pred_comparison(
         specs=[[{"type": "scene"}, {"type": "scene"}]],
         subplot_titles=("target", "pred"),
     )
-    fig.add_trace(_mesh_trace(), row=1, col=1)
+    fig.add_trace(_mesh(), row=1, col=1)
     fig.add_trace(
         go.Scatter3d(
             x=points[:, 0],
@@ -377,7 +343,7 @@ def plot_gt_vs_pred_comparison(
         row=1,
         col=1,
     )
-    fig.add_trace(_mesh_trace(), row=1, col=2)
+    fig.add_trace(_mesh(), row=1, col=2)
     fig.add_trace(
         go.Scatter3d(
             x=points[:, 0],
@@ -419,7 +385,6 @@ def plot_gt_vs_pred_comparison_robust(
     title: str = "",
     colorscale: str = "Viridis",
 ) -> go.Figure:
-    config = loader.cfg
     points = np.asarray(points)
     target = np.asarray(target)
     pred = np.asarray(pred)
@@ -431,22 +396,11 @@ def plot_gt_vs_pred_comparison_robust(
     cmin = float(min(target[inlier].min(), pred[inlier].min()))
     cmax = float(max(target[inlier].max(), pred[inlier].max()))
 
-    instance = loader.load_instances(scene_id, img_id)[inst_idx]
-    mesh = trimesh.load(config.paths.model_path(instance.obj_id))
-    posed_vertices = transform_points(mesh.vertices, instance.R, instance.t)
-    faces = mesh.faces
+    _, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
 
-    def _mesh_trace():
-        return go.Mesh3d(
-            x=posed_vertices[:, 0],
-            y=posed_vertices[:, 1],
-            z=-posed_vertices[:, 2],
-            i=faces[:, 0],
-            j=faces[:, 1],
-            k=faces[:, 2],
-            opacity=0.3,
-            color="orange",
-            showlegend=False,
+    def _mesh():
+        return _mesh_trace(
+            vertices, faces, opacity=0.3, color="orange", showlegend=False
         )
 
     fig = make_subplots(
@@ -455,8 +409,8 @@ def plot_gt_vs_pred_comparison_robust(
         specs=[[{"type": "scene"}, {"type": "scene"}]],
         subplot_titles=("target", "pred"),
     )
-    fig.add_trace(_mesh_trace(), row=1, col=1)
-    fig.add_trace(_mesh_trace(), row=1, col=2)
+    fig.add_trace(_mesh(), row=1, col=1)
+    fig.add_trace(_mesh(), row=1, col=2)
 
     def _add(values, name, col, showscale):
         fig.add_trace(
@@ -502,29 +456,4 @@ def plot_gt_vs_pred_comparison_robust(
         scene=dict(aspectmode="data"),
         scene2=dict(aspectmode="data"),
     )
-    return fig
-
-
-def combine_splits(dfs: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    return pd.concat(
-        [df.assign(split=name) for name, df in dfs.items()], ignore_index=True
-    )
-
-
-def plot_error_boxplot_by_group(
-    groups: dict[str, np.ndarray],
-    ylabel: str = "error",
-    title: str = "",
-    ax: plt.Axes | None = None,
-) -> plt.Figure:
-    rows = [
-        {"group": name, "error": v} for name, values in groups.items() for v in values
-    ]
-    df = pd.DataFrame(rows)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 4))
-    else:
-        fig = ax.figure
-    sns.boxplot(data=df, x="group", y="error", ax=ax)
-    ax.set(title=title, ylabel=ylabel)
     return fig
