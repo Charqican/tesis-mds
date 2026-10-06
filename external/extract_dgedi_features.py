@@ -26,8 +26,8 @@ layout: scripts/pose6d_prepare_data.py writes the list of pT files and prints th
 command to run, e.g.
 
     external/dgedi_env/bin/python external/extract_dgedi_features.py \\
-        --inputs-list {root}/experiments/{exp}/dgedi_inputs.txt \\
-        --output-dir {root}/experiments/{exp}/input --dim 32
+        --inputs-list {root}/versions/{version}/dgedi_inputs.txt \\
+        --output-dir {root}/versions/{version}/input --dim 32
 """
 try:
     from tqdm import tqdm
