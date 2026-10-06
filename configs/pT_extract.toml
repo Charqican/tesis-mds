@@ -1,7 +1,4 @@
-# Partial pointcloud (pT) versions. Each section is a folder name:
-#   {POSE6D_ROOT}/{dataset}/cache/{section}/points_pT
-# Changing the parameters of a version that already exists on disk is an error:
-# create a new section instead.
+# Changing the parameters of a version that already exists on disk is an error, you should create a new section instead.
 
 [rm_outliers_20_2_visib_10]
 min_visib = 0.10
@@ -10,7 +7,7 @@ outliers = { nb_neighbors = 20, std = 2.0 }
 
 [[rm_outliers_20_2_visib_10.sources]]
 dataset = "pbr"
-scenes = "0-49"
+scenes = "2-3"
 
 [[rm_outliers_20_2_visib_10.sources]]
 dataset = "lmo"

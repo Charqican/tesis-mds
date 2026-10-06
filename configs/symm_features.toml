@@ -1,5 +1,5 @@
-# Experiments (symmetry field target + dgedi input). Each section is a folder name:
-#   {POSE6D_ROOT}/experiments/{section}/{input,target}
+# Preprocessing versions (symmetry field target + dgedi input). Each section is a folder name:
+#   {POSE6D_ROOT}/versions/{section}/{input,target}
 # Every instance of the pT version is included; object/scene selection happens at training.
 #   pT                 section of pT_extract.toml
 #   dgedi_dim          32 or 64, forwarded to the dgedi command
@@ -7,5 +7,5 @@
 #   seed               seed of that sampling (default 0)
 
 [scalarfield_exp3]
-pT = "rm_outliers_20_2_visib_10"
+pT = "rm_outliers_20_2_visib_10" # this will search fot this version name in every folder
 dgedi_dim = 32
