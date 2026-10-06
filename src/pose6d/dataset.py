@@ -1,5 +1,7 @@
+import json
 import random
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -70,12 +72,47 @@ class Splits:
         train, val = cls._shuffle_split(rest, val_frac, seed)
         return cls(train=train, val=val, test=test)
 
+    # same number of test uids for every object (test_frac of the smallest one).
+    # Each object is shuffled on its own, so filtering by objects keeps the split nested:
+    # the obj 10 split is the obj 10 part of the obj 10+11 split.
+    @classmethod
+    def stratified(
+        cls, uids: list[str], test_frac: float, val_frac: float, seed: int = 123
+    ) -> "Splits":
+        by_obj: dict[int, list[str]] = {}
+        for uid in sorted(uids):
+            by_obj.setdefault(BOPLoader.parse_instance_uid(uid)[3], []).append(uid)
+        n_test = int(min(map(len, by_obj.values())) * test_frac)
+
+        splits = cls()
+        for obj_id, obj_uids in sorted(by_obj.items()):
+            random.Random(seed * 1000 + obj_id).shuffle(obj_uids)
+            n_val = int(len(obj_uids) * val_frac)
+            splits.test += obj_uids[:n_test]
+            splits.val += obj_uids[n_test : n_test + n_val]
+            splits.train += obj_uids[n_test + n_val :]
+        return cls(*(sorted(s) for s in (splits.train, splits.val, splits.test)))
+
+    def subset(self, uids: list[str]) -> "Splits":
+        keep = set(uids)
+        return Splits(
+            **{n: [u for u in getattr(self, n) if u in keep] for n in SPLIT_NAMES}
+        )
+
     def to_dict(self) -> dict[str, list[str]]:
         return {"train": self.train, "val": self.val, "test": self.test}
 
     @classmethod
     def from_dict(cls, d: dict[str, list[str]]) -> "Splits":
         return cls(train=d["train"], val=d.get("val", []), test=d["test"])
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.to_dict(), indent=1))
+
+    @classmethod
+    def load(cls, path: Path) -> "Splits":
+        return cls.from_dict(json.loads(path.read_text()))
 
 
 class Normalizer:
