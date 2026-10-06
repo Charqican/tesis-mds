@@ -35,13 +35,13 @@ so this script writes the work list and prints the exact command to run.
     # run every configuration in both toml 
     python scripts/pose6d_prepare_data.py
 
-    # one pT version / one experiment 
+    # one pT version / one preprocessing version 
     python scripts/pose6d_prepare_data.py --config-name rm_outliers_20_2_visib_10
-    python scripts/pose6d_prepare_data.py --experiment-name scalarfield_exp3
+    python scripts/pose6d_prepare_data.py --version-name scalarfield_exp3
 
     # specific cases with the parameters of a version. This is used mainfly for analysis
-    python scripts/pose6d_prepare_data.py --experiment-name scalarfield_exp3 --scenes pbr:3,5-7 lmo:2
-    python scripts/pose6d_prepare_data.py --experiment-name scalarfield_exp3 --uids pbr_scene000003_img000012_obj000010_inst01
+    python scripts/pose6d_prepare_data.py --version-name scalarfield_exp3 --scenes pbr:3,5-7 lmo:2
+    python scripts/pose6d_prepare_data.py --version-name scalarfield_exp3 --uids pbr_scene000003_img000012_obj000010_inst01
 """
 
 EXTERNAL_DIR = Path(__file__).resolve().parents[1] / "external"
@@ -102,7 +102,7 @@ def run_pT(
             write_manifest(manifest_path, manifest)
 
 
-def run_for_experiment(
+def run_for_version(
     layout: DataLayout,
     exp: SymmConfig,
     pT_cfg: PTConfig,
@@ -131,9 +131,9 @@ def run_for_experiment(
     compute_targets(pending_targets, target_dir, exp.canonical_samples, exp.seed)
 
     write_manifest(
-        layout.experiment_manifest(exp.name),
+        layout.version_manifest(exp.name),
         {
-            "experiment": exp.name,
+            "version": exp.name,
             "pT": exp.pT,
             "pT_params": pT_cfg.params(),
             "dgedi_dim": exp.dgedi_dim,
@@ -177,19 +177,19 @@ def main() -> None:
         run_pT(layout, pT_configs[args.config_name], scenes, args.uids)
         return
 
-    if args.experiment_name:
-        experiments = [symm_configs[args.experiment_name]]
-        pT_names = [experiments[0].pT]
+    if args.version_name:
+        versions = [symm_configs[args.version_name]]
+        pT_names = [versions[0].pT]
     else:
-        experiments = list(symm_configs.values())
+        versions = list(symm_configs.values())
         pT_names = list(pT_configs)
 
     for name in pT_names:
         run_pT(layout, pT_configs[name], scenes, args.uids)
 
     commands = [
-        run_for_experiment(layout, exp, pT_configs[exp.pT], scenes, args.uids)
-        for exp in experiments
+        run_for_version(layout, exp, pT_configs[exp.pT], scenes, args.uids)
+        for exp in versions
     ]
     commands = [c for c in commands if c]
     if commands:
@@ -207,8 +207,8 @@ def parse_args() -> argparse.Namespace:
         "--config-name", help="Only extract this pT version (pT_extract.toml section)."
     )
     names.add_argument(
-        "--experiment-name",
-        help="Only process this experiment (symm_features.toml section) and its pT version.",
+        "--version-name",
+        help="Only process this version (symm_features.toml section) and its pT version.",
     )
 
     subset = p.add_mutually_exclusive_group()
@@ -216,20 +216,20 @@ def parse_args() -> argparse.Namespace:
         "--scenes",
         nargs="+",
         metavar="DATASET:SCENES",
-        help="Only these scenes, e.g. pbr:3,5-7 lmo:2. Needs --config-name or --experiment-name.",
+        help="Only these scenes, e.g. pbr:3,5-7 lmo:2. Needs --config-name or --version-name.",
     )
     subset.add_argument(
         "--uids",
         nargs="+",
-        help="Only these instance uids. Needs --config-name or --experiment-name.",
+        help="Only these instance uids. Needs --config-name or --version-name.",
     )
 
     p.add_argument("--pT-toml", type=Path, default=PT_TOML)
     p.add_argument("--symm-toml", type=Path, default=SYMM_TOML)
 
     args = p.parse_args()
-    if (args.scenes or args.uids) and not (args.config_name or args.experiment_name):
-        p.error("--scenes/--uids need --config-name or --experiment-name")
+    if (args.scenes or args.uids) and not (args.config_name or args.version_name):
+        p.error("--scenes/--uids need --config-name or --version-name")
     return args
 
 
