@@ -1,13 +1,10 @@
 from dataclasses import dataclass
 from itertools import product
-from pathlib import Path
-from typing import Any, Callable
-import tomllib
 
 import torch
 
-from pose6d.config import LMOConfig
-from pose6d.loader import LMOLoader
+from pose6d.dataset import Splits
+from pose6d.layout import uid_dataset
 from pose6d.model import (
     SymmetryFieldMLP1,
     SymmetryFieldMLP2,
@@ -15,206 +12,118 @@ from pose6d.model import (
     SymmetryFieldMLP4,
     SymmetryFieldMLP5,
 )
-from experiments.experiment_setup import setup_exp1, setup_exp_cross
-from experiments.experiment_training import training_function
-from pose6d.dataset import DatasetSource
 
-#  INFO: this configurations does not distinguish between using optimizer or not
+"""
+Experiments for the CLI (scripts/run_experiments.py). An Experiment is a list of run
+configs, each one a plain dict:
+    data:  data experiment ({root}/experiments/{experiment}), split name, obj_ids, scenes
+    model: model class + kwargs
+    train: batch size, optimizer, scheduler, early stopping, seed
+
+"""
+
+DATA_EXPERIMENT = "scalarfield_exp3"
+
+# Splits are static to compare them between runs and experiments
+SPLITS = {
+    "lmo-strat": lambda uids: Splits.stratified(
+        [u for u in uids if uid_dataset(u) == "lmo"], test_frac=0.15, val_frac=0.15
+    ),
+    "pbr-train_lmo-test": lambda uids: Splits.by_dataset(uids, "lmo", val_frac=0.15),
+}
 
 
-# This dataclass is used for the experiments CLI
+# slim dataclass, confiug can vary so a dict is passed
 @dataclass
 class Experiment:
     name: str
-    setup_func: Callable[..., Any]
-    train_eng: Callable[..., Any]
     configs: list[dict]
 
 
-# automate the training configurations iterating over batch sizes, optimizers and models
-def build_configs_exp1(
+def _tag(values) -> str:
+    return "-".join(str(v) for v in sorted(values))
+
+
+def build_configs(
     experiment_name: str,
-    sel_obj_ids: frozenset[int],
-    points_pt_dir: Path,
-    input_dir: Path,
-    target_dir: Path,
-    loader: LMOLoader,
+    split: str,
+    obj_ids: set[int],
     model_specs: list[tuple[type, dict | None]],
     batch_sizes: list[int],
     optimizer_specs: list[tuple[type, dict | None, type | None, dict | None]],
-    patience: int | None = None,
-    min_delta: float | None = None,
-    min_epochs: int | None = None,
+    scenes: dict[str, set[int]] | None = None,
+    data_experiment: str = DATA_EXPERIMENT,
+    seed: int = 0,
+    **train_kwargs,
 ) -> list[dict]:
-    obj_tag = "-".join(str(i) for i in sorted(sel_obj_ids))
+    """One config per (batch size, optimizer, model). seed sets model init and shuffling."""
+    scene_tag = "".join(f"_{d}-sc{_tag(s)}" for d, s in sorted((scenes or {}).items()))
     configs = []
-    for batch_size, (
-        optimizer_cls,
-        optimizer_kwargs,
-        scheduler_cls,
-        scheduler_kwargs,
-    ), (model_cls, model_kwargs) in product(batch_sizes, optimizer_specs, model_specs):
-        run_name = (
-            f"obj{obj_tag}_{model_cls.__name__}_bs{batch_size}_"
-            f"{optimizer_cls.__name__}_{scheduler_cls.__name__ if scheduler_cls else 'noshd'}"
-        )
-        configs.append(
-            {
-                "experiment_name": experiment_name,
-                "run_name": run_name,
-                "setup_conf": {
-                    "loader": loader,
-                    "points_pt_dir": points_pt_dir,
-                    "input_dir": input_dir,
-                    "target_dir": target_dir,
-                    "model_cls": model_cls,
-                    "model_kwargs": model_kwargs,
-                    "sel_obj_ids": sel_obj_ids,
-                    "batch_size": batch_size,
-                },
-                "train_conf": {
-                    "optimizer_cls": optimizer_cls,
-                    "optimizer_kwargs": optimizer_kwargs,
-                    "scheduler_cls": scheduler_cls,
-                    "scheduler_kwargs": scheduler_kwargs,
-                    "patience": patience,
-                    "min_delta": min_delta,
-                    "min_epochs": min_epochs,
-                },
-            }
-        )
-    return configs
-
-
-# adds test - train  configurations + validation
-def build_configs_exp_synthetic(
-    experiment_name: str,
-    sel_obj_ids: frozenset[int],
-    train_source: DatasetSource,
-    test_source: DatasetSource,
-    model_specs: list[tuple[type, dict | None]],
-    batch_sizes: list[int],
-    optimizer_specs: list[tuple[type, dict | None, type | None, dict | None]],
-    train_scene_ids: frozenset[int] | None = None,
-    patience: int | None = None,
-    min_delta: float | None = None,
-    min_epochs: int | None = None,
-) -> list[dict]:
-    obj_tag = "-".join(str(i) for i in sorted(sel_obj_ids))
-    scene_tag = (
-        "sc" + "-".join(str(i) for i in sorted(train_scene_ids))
-        if train_scene_ids
-        else "scall"
-    )
-    configs = []
-    for batch_size, (
-        optimizer_cls,
-        optimizer_kwargs,
-        scheduler_cls,
-        scheduler_kwargs,
-    ), (model_cls, model_kwargs) in product(batch_sizes, optimizer_specs, model_specs):
-        model_tag = model_cls.__name__
+    for batch_size, (opt_cls, opt_kwargs, sched_cls, sched_kwargs), (
+        model_cls,
+        model_kwargs,
+    ) in product(batch_sizes, optimizer_specs, model_specs):  # cartesian product
+        model_tag = model_cls.__name__.removeprefix("SymmetryField")
         if model_kwargs:
-            kwargs_tag = "-".join(f"{k}{v}" for k, v in sorted(model_kwargs.items()))
-            model_tag = f"{model_tag}_{kwargs_tag}"
-
-        run_name = (
-            f"obj{obj_tag}_{scene_tag}_bpr-train_lmo-test_{model_tag}_bs{batch_size}_"
-            f"{optimizer_cls.__name__}_{scheduler_cls.__name__ if scheduler_cls else 'noshd'}"
-        )
+            model_tag += "-" + "-".join(
+                f"{k}{v}" for k, v in sorted(model_kwargs.items())
+            )
+        sched_tag = sched_cls.__name__ if sched_cls else "noshd"
         configs.append(
             {
                 "experiment_name": experiment_name,
-                "run_name": run_name,
-                "setup_conf": {
-                    "sel_obj_ids": sel_obj_ids,
-                    "train_scene_ids": train_scene_ids,
-                    "train_source": train_source,
-                    "test_source": test_source,
-                    "model_cls": model_cls,
-                    "model_kwargs": model_kwargs,
-                    "batch_size": batch_size,
+                "run_name": (
+                    f"obj{_tag(obj_ids)}_{split}{scene_tag}_{model_tag}"
+                    f"_bs{batch_size}_{opt_cls.__name__}_{sched_tag}"
+                ),
+                "data": {
+                    "experiment": data_experiment,
+                    "split": split,
+                    "obj_ids": sorted(obj_ids),
+                    "scenes": scenes,
                 },
-                "train_conf": {
-                    "optimizer_cls": optimizer_cls,
-                    "optimizer_kwargs": optimizer_kwargs,
-                    "scheduler_cls": scheduler_cls,
-                    "scheduler_kwargs": scheduler_kwargs,
-                    "patience": patience,
-                    "min_delta": min_delta,
-                    "min_epochs": min_epochs,
+                "model": {"cls": model_cls, "kwargs": model_kwargs},
+                "train": {
+                    "batch_size": batch_size,
+                    "optimizer_cls": opt_cls,
+                    "optimizer_kwargs": opt_kwargs,
+                    "scheduler_cls": sched_cls,
+                    "scheduler_kwargs": sched_kwargs,
+                    "seed": seed,
+                    **train_kwargs,
                 },
             }
         )
     return configs
 
 
-# Load toml paths
-config_path = Path(__file__).parent / "paths.toml"
-with config_path.open("rb") as f:
-    data = tomllib.load(f)
-
-# root files
-ROOT = Path(data["training"]["root"])
-LMO_ROOT = Path(data["lmo"]["root"])
-PBR_ROOT = Path(data["pbr"]["root"])
-
-#
-lmo_config = LMOConfig.from_root(LMO_ROOT)
-LOADER = LMOLoader(lmo_config)
-POINTS_PT_DIR = ROOT / data["training"]["points_pt_dir"].lstrip("/")
-INPUT_DIR = ROOT / data["training"]["input_dir"].lstrip("/")
-TARGET_DIR = ROOT / data["training"]["target_dir"].lstrip("/")
-
-TRAIN_SOURCE_BPR = DatasetSource(
-    points_dir=ROOT / "pbr/cache/rm_outliers_20_2_visib_10/points_pT",
-    input_dir=ROOT / "pbr/scalarfield_exp3/training/input",
-    target_dir=ROOT / "pbr/scalarfield_exp3/training/target",
-)
-TEST_SOURCE_LMO = DatasetSource(
-    points_dir=ROOT / "lmo/cache/rm_outliers_20_2_visib_10/points_pT",
-    input_dir=ROOT / "lmo/scalarfield_exp3/training/input",
-    target_dir=ROOT / "lmo/scalarfield_exp3/training/target",
-)
-
-BATCH_SIZES = [16, 32, 64, 128]
+# --- grids
 OPTIMIZER_SPECS = [
-    (
-        torch.optim.SGD,
-        {"lr": 1e-2, "momentum": 0.9},
-        None,
-        None,
-    ),
+    (torch.optim.SGD, {"lr": 1e-2, "momentum": 0.9}, None, None),
     (
         torch.optim.SGD,
         {"lr": 1e-2, "momentum": 0.9},
         torch.optim.lr_scheduler.StepLR,
         {"step_size": 1000, "gamma": 0.5},
     ),
-    (
-        torch.optim.Adam,
-        {"lr": 1e-3},
-        None,
-        None,
-    ),
+    (torch.optim.Adam, {"lr": 1e-3}, None, None),
     (
         torch.optim.Adam,
         {"lr": 1e-3},
         torch.optim.lr_scheduler.CosineAnnealingLR,
         {"T_max": 5000},
     ),
-    (
-        torch.optim.AdamW,
-        {"lr": 1e-3, "weight_decay": 1e-2},
-        None,
-        None,
-    ),
+    (torch.optim.AdamW, {"lr": 1e-3, "weight_decay": 1e-2}, None, None),
     (
         torch.optim.AdamW,
         {"lr": 1e-3, "weight_decay": 1e-2},
         torch.optim.lr_scheduler.CosineAnnealingLR,
         {"T_max": 5000},
     ),
+]
+# Adam and AdamW only (as it have the best performance)
+OPTIMIZER_SPECS_ADAM = [
+    spec for spec in OPTIMIZER_SPECS if spec[0] in (torch.optim.Adam, torch.optim.AdamW)
 ]
 MODEL_SPECS = [
     (SymmetryFieldMLP1, None),
@@ -223,166 +132,82 @@ MODEL_SPECS = [
     (SymmetryFieldMLP4, None),
     (SymmetryFieldMLP5, None),
 ]
-PATIENCE = 50
-MIN_DELTA = 0.0005
-
-BATCH_SIZES_CROSS = [1024, 2048]
-
-# Adam and AdamW only (with and without scheduler)
-OPTIMIZER_SPECS_CROSS = [
-    spec for spec in OPTIMIZER_SPECS if spec[0] in (torch.optim.Adam, torch.optim.AdamW)
-]
-
-MODEL_SPECS_CROSS = [
+MODEL_SPECS_CROSS = [  # MLP5 is the best performance, MLP1 4 for ablation
     (SymmetryFieldMLP5, {"dropout": 0.0}),
     (SymmetryFieldMLP5, {"dropout": 0.2}),
     (SymmetryFieldMLP5, {"dropout": 0.3}),
     (SymmetryFieldMLP4, None),
     (SymmetryFieldMLP1, None),
 ]
+BATCH_SIZES_LMO = [32, 64, 128]
+BATCH_SIZES_PBR = [1024, 2048]
 
-REGISTRY: dict[str, Experiment] = {
-    # "exp2_11_10": Experiment(
-    #     name="exp2",
-    #     setup_func=setup_exp1,
-    #     train_eng=training_function,
-    #     configs=build_configs_exp1(
-    #         experiment_name="experiment_2",
-    #         sel_obj_ids=frozenset({10, 11}),
-    #         points_pt_dir=POINTS_PT_DIR,
-    #         input_dir=INPUT_DIR,
-    #         target_dir=TARGET_DIR,
-    #         loader=LOADER,
-    #         model_specs=MODEL_SPECS,
-    #         batch_sizes=BATCH_SIZES,
-    #         optimizer_specs=OPTIMIZER_SPECS,
-    #         patience=PATIENCE,
-    #         min_delta=MIN_DELTA,
-    #         min_epochs=2000,
-    #     ),
-    # ),
-    # "exp1_10": Experiment(
-    #     name="exp1_10",
-    #     setup_func=setup_exp1,
-    #     train_eng=training_function,
-    #     configs=build_configs_exp1(
-    #         experiment_name="experiment_1_10",
-    #         sel_obj_ids=frozenset({10}),
-    #         points_pt_dir=POINTS_PT_DIR,
-    #         input_dir=INPUT_DIR,
-    #         target_dir=TARGET_DIR,
-    #         loader=LOADER,
-    #         model_specs=MODEL_SPECS,
-    #         batch_sizes=BATCH_SIZES,
-    #         optimizer_specs=OPTIMIZER_SPECS,
-    #         patience=PATIENCE,
-    #         min_delta=MIN_DELTA,
-    #         min_epochs=2000,
-    #     ),
-    # ),
-    # "exp1_11": Experiment(
-    #     name="exp1_11",
-    #     setup_func=setup_exp1,
-    #     train_eng=training_function,
-    #     configs=build_configs_exp1(
-    #         experiment_name="experiment_1_11",
-    #         sel_obj_ids=frozenset({11}),
-    #         points_pt_dir=POINTS_PT_DIR,
-    #         input_dir=INPUT_DIR,
-    #         target_dir=TARGET_DIR,
-    #         loader=LOADER,
-    #         model_specs=MODEL_SPECS,
-    #         batch_sizes=BATCH_SIZES,
-    #         optimizer_specs=OPTIMIZER_SPECS,
-    #         patience=PATIENCE,
-    #         min_delta=MIN_DELTA,
-    #         min_epochs=2000,
-    #     ),
-    # ),
-    # "exp3_bpr_train_lmo_test": Experiment(
-    #     name="exp3_bpr_train_lmo_test",
-    #     setup_func=setup_exp_cross,
-    #     train_eng=training_function,
-    #     configs=build_configs_exp_synthetic(
-    #         experiment_name="experiment_3_cross",
-    #         sel_obj_ids=frozenset({10, 11}),
-    #         train_source=TRAIN_SOURCE_BPR,
-    #         test_source=TEST_SOURCE_LMO,
-    #         model_specs=MODEL_SPECS_CROSS,
-    #         batch_sizes=BATCH_SIZES_CROSS,
-    #         optimizer_specs=OPTIMIZER_SPECS,
-    #         patience=PATIENCE,
-    #         min_delta=MIN_DELTA,
-    #         min_epochs=2000,
-    #     ),
-    # ),
-    "exp3_test_single_scene": Experiment(
-        name="exp3_test_single_scene",
-        setup_func=setup_exp_cross,
-        train_eng=training_function,
-        configs=build_configs_exp_synthetic(
-            experiment_name="experiment_3_cross_server_test",
-            sel_obj_ids=frozenset({10, 11}),
-            train_scene_ids=frozenset({3}),
-            train_source=TRAIN_SOURCE_BPR,
-            test_source=TEST_SOURCE_LMO,
+# early stopping, in epochs: patience only counts after min_epochs
+TRAIN_KWARGS = {
+    "max_epochs": 3000,
+    "min_epochs": 600,
+    "patience": 500,
+    "min_delta": 0.0005,
+    "eval_every": 10,
+}
+
+
+def lmo_experiment(obj_ids: set[int]) -> Experiment:
+    name = f"lmo-strat_obj{_tag(obj_ids)}"
+    return Experiment(
+        name=name,
+        configs=build_configs(
+            experiment_name=name,
+            split="lmo-strat",
+            obj_ids=obj_ids,
+            model_specs=MODEL_SPECS_CROSS,
+            batch_sizes=BATCH_SIZES_LMO,
+            optimizer_specs=OPTIMIZER_SPECS_ADAM,
+            **TRAIN_KWARGS,
+        ),
+    )
+
+
+def pbr_lmo_experiment(obj_ids: set[int]) -> Experiment:
+    name = f"pbr-train_lmo-test_obj{_tag(obj_ids)}"
+    return Experiment(
+        name=name,
+        configs=build_configs(
+            experiment_name=name,
+            split="pbr-train_lmo-test",
+            obj_ids=obj_ids,
+            model_specs=MODEL_SPECS_CROSS,
+            batch_sizes=BATCH_SIZES_PBR,
+            optimizer_specs=OPTIMIZER_SPECS_ADAM,
+            **TRAIN_KWARGS,
+        ),
+    )
+
+
+_EXPERIMENTS = [
+    lmo_experiment({10}),
+    lmo_experiment({11}),
+    lmo_experiment({10, 11}),
+    # Testing server experiment
+    Experiment(
+        name="pbr-train_lmo-test_server-check",
+        configs=build_configs(
+            experiment_name="pbr-train_lmo-test_server-check",
+            split="pbr-train_lmo-test",
+            obj_ids={10, 11},
+            scenes={"pbr": {3}, "lmo": {2}},
             model_specs=[(SymmetryFieldMLP5, {"dropout": 0.1})],
             batch_sizes=[128],
             optimizer_specs=[OPTIMIZER_SPECS[2]],
-            patience=5,
-            min_delta=MIN_DELTA,
+            max_epochs=50,
             min_epochs=10,
+            patience=5,
+            min_delta=0.0005,
+            eval_every=1,
         ),
     ),
-    "exp3_cross_10_11": Experiment(
-        name="exp3_cross_10_11",
-        setup_func=setup_exp_cross,
-        train_eng=training_function,
-        configs=build_configs_exp_synthetic(
-            experiment_name="experiment_3_cross_server",
-            sel_obj_ids=frozenset({10, 11}),
-            train_source=TRAIN_SOURCE_BPR,
-            test_source=TEST_SOURCE_LMO,
-            model_specs=MODEL_SPECS_CROSS,
-            batch_sizes=BATCH_SIZES_CROSS,
-            optimizer_specs=OPTIMIZER_SPECS_CROSS,
-            patience=PATIENCE,
-            min_delta=MIN_DELTA,
-            min_epochs=600,
-        ),
-    ),
-    "exp3_cross_10": Experiment(
-        name="exp3_cross_10",
-        setup_func=setup_exp_cross,
-        train_eng=training_function,
-        configs=build_configs_exp_synthetic(
-            experiment_name="experiment_3_cross_server_10",
-            sel_obj_ids=frozenset({10}),
-            train_source=TRAIN_SOURCE_BPR,
-            test_source=TEST_SOURCE_LMO,
-            model_specs=MODEL_SPECS_CROSS,
-            batch_sizes=BATCH_SIZES_CROSS,
-            optimizer_specs=OPTIMIZER_SPECS_CROSS,
-            patience=PATIENCE,
-            min_delta=MIN_DELTA,
-            min_epochs=600,
-        ),
-    ),
-    "exp3_cross_11": Experiment(
-        name="exp3_cross_11",
-        setup_func=setup_exp_cross,
-        train_eng=training_function,
-        configs=build_configs_exp_synthetic(
-            experiment_name="experiment_3_cross_server_11",
-            sel_obj_ids=frozenset({11}),
-            train_source=TRAIN_SOURCE_BPR,
-            test_source=TEST_SOURCE_LMO,
-            model_specs=MODEL_SPECS_CROSS,
-            batch_sizes=BATCH_SIZES_CROSS,
-            optimizer_specs=OPTIMIZER_SPECS_CROSS,
-            patience=PATIENCE,
-            min_delta=MIN_DELTA,
-            min_epochs=600,
-        ),
-    ),
-}
+    pbr_lmo_experiment({10, 11}),
+    pbr_lmo_experiment({10}),
+    pbr_lmo_experiment({11}),
+]
+REGISTRY: dict[str, Experiment] = {e.name: e for e in _EXPERIMENTS}
