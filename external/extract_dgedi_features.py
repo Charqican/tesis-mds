@@ -1,5 +1,4 @@
 import sys
-import os
 import argparse
 from pathlib import Path
 
@@ -21,6 +20,15 @@ from utils import (
 
 # WARNING: instance diameter needs to be revised as its not clear if we should use the complete object
 # INFO: the following code is entirely based on the DEMO script of the original repository
+"""
+Runs in its own environment (external/dgedi_env). It knows nothing about the project
+layout: scripts/pose6d_prepare_data.py writes the list of pT files and prints the exact
+command to run, e.g.
+
+    external/dgedi_env/bin/python external/extract_dgedi_features.py \\
+        --inputs-list {root}/experiments/{exp}/dgedi_inputs.txt \\
+        --output-dir {root}/experiments/{exp}/input --dim 32
+"""
 try:
     from tqdm import tqdm
 
@@ -30,89 +38,45 @@ except ImportError:
 
 # Dgedi Configuration
 CONFIG_PATH = DGEDI_ROOT / "config_dgedi.yaml"
-MODE = "single_scale"
+# output dim = first decoder channel of each config_dgedi.yaml mode
+MODE_BY_DIM = {32: "single_scale", 64: "multi_scale"}
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SKIP_EXISTING = True
-
-# external/ -> project root: find .env if available
-ENV_PATH = Path(__file__).parent.parent / ".env"
 
 
-def load_env_file(path: Path) -> None:
-    """.env loader"""
-    if not path.exists():
-        return
-
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        # remove comments
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        # partition to only obtain the first instance of =.
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+class DimMismatchError(RuntimeError):
+    pass
 
 
 def parse_args() -> argparse.Namespace:
-    load_env_file(ENV_PATH)
-
     p = argparse.ArgumentParser(
-        description="Extract dGeDi features from partial pointclouds (pT)."
+        description="Extract dGeDi features from a list of partial pointclouds (pT)."
     )
-
     p.add_argument(
-        "--root",
-        "-r",
+        "--inputs-list",
         type=Path,
-        help="Root directory for processed data (fallback: POSE6D_ROOT in .env). The script will target {dataset-type}/cache/ inside root",
+        required=True,
+        help="Text file with one pT .npz path per line.",
     )
-
     p.add_argument(
-        "--dataset-type",
-        "-t",
-        type=str,
-        default="lmo",
-        choices=["lmo", "pbr"],
-        help="Which BOP dataset layout to target under root.",
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory where the features are saved (same file name as the pT).",
     )
-
-    p.add_argument(
-        "--experiment-name",
-        "-e",
-        type=str,
-        default="scalarfield",
-        help="Name of subfolder inside root. the resulting features will be saved in root/{dataset-type}/experiment-name/training/input",
-    )
-
-    p.add_argument(
-        "--version-name",
-        "-vn",
-        type=str,
-    )
-
+    p.add_argument("--dim", type=int, required=True, choices=sorted(MODE_BY_DIM))
     p.add_argument("--batch-size", "-b", type=int, default=None)
-
-    args = p.parse_args()
-
-    if args.root is None:
-        env = os.getenv("POSE6D_ROOT")
-        if env:
-            args.root = Path(env)
-    if args.root is None:
-        p.error("Pass --root or set POSE6D_ROOT in .env")
-
-    return args
+    return p.parse_args()
 
 
-def load_model():
+def load_model(mode: str):
     cfg = load_yaml_config(str(CONFIG_PATH))
-    model_cfg = dict(cfg[MODE]["model_config"])
-    model_cfg["weights_path"] = str(DGEDI_ROOT / cfg[MODE]["weights_path"])
+    model_cfg = dict(cfg[mode]["model_config"])
+    model_cfg["weights_path"] = str(DGEDI_ROOT / cfg[mode]["weights_path"])
     return dgedi({"query": model_cfg, "target": model_cfg, "device": DEVICE})
 
 
 @torch.no_grad()
-def process_one(npz_path: Path, model, features_dir: Path) -> None:
+def process_one(npz_path: Path, model, features_dir: Path, dim: int) -> None:
     data = np.load(npz_path)
     points = data["points"]
 
@@ -122,8 +86,11 @@ def process_one(npz_path: Path, model, features_dir: Path) -> None:
     diameter = compute_diameter(pcd)
     normalize_and_center(pcd, diameter)
     features = extract_features(pcd, model, DEVICE)
+    if features.shape[-1] != dim:
+        raise DimMismatchError(
+            f"mode {MODE_BY_DIM[dim]} produced {features.shape[-1]}-dim features, expected {dim}"
+        )
 
-    features_dir.mkdir(parents=True, exist_ok=True)
     np.savez(features_dir / npz_path.name, features=features.astype(np.float32))
 
     del pcd, features
@@ -133,24 +100,18 @@ def process_one(npz_path: Path, model, features_dir: Path) -> None:
 
 def main():
     args = parse_args()
-    points_pt_dir = args.root / args.dataset_type / "cache"
-    points_pt_dir = (
-        points_pt_dir / args.version_name / "points_pT"
-        if args.version_name
-        else points_pt_dir / "points_pT"
-    )
-    features_input_dir = (
-        args.root / args.dataset_type / args.experiment_name / "training" / "input"
-    )
-
-    all_inputs = sorted(points_pt_dir.rglob(f"{args.dataset_type}*.npz"))
-    pending = (
-        [p for p in all_inputs if not (features_input_dir / p.name).exists()]
-        if SKIP_EXISTING
-        else all_inputs
-    )
+    all_inputs = [
+        Path(line.strip())
+        for line in args.inputs_list.read_text().splitlines()
+        if line.strip()
+    ]
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    pending = [p for p in all_inputs if not (args.output_dir / p.name).exists()]
     print(f"{len(all_inputs)} total, {len(pending)} pending")
+    if not pending:
+        return
 
+    mode = MODE_BY_DIM[args.dim]
     batch_size = args.batch_size or len(pending)
     n_ok, n_failed = 0, 0
 
@@ -158,14 +119,16 @@ def main():
         batch = pending[batch_start : batch_start + batch_size]
         print(f"Batch {batch_start // batch_size + 1}: {len(batch)} instancias")
 
-        print(f"Device: {DEVICE}")
-        model = load_model()  # modelo fresco por batch
+        print(f"Device: {DEVICE}, mode: {mode}")
+        model = load_model(mode)  # modelo fresco por batch
 
         iterator = tqdm(batch, unit="instance") if TQDM_AVAILABLE else batch
         for npz_path in iterator:
             try:
-                process_one(npz_path, model, features_input_dir)
+                process_one(npz_path, model, args.output_dir, args.dim)
                 n_ok += 1
+            except DimMismatchError:
+                raise
             except Exception as e:
                 n_failed += 1
                 print(f"[ERROR] {npz_path.name}: {e}")
