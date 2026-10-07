@@ -150,6 +150,20 @@ TRAIN_KWARGS = {
     "min_delta": 0.0005,
     "eval_every": 10,
 }
+# pbr epochs are much bigger (more instances): val loss plateaus by ~1000 epochs and
+# later gains are ~1%, so shorter budget and a larger min_delta to ignore noise
+TRAIN_KWARGS_PBR = {
+    **TRAIN_KWARGS,
+    "max_epochs": 1500,
+    "min_epochs": 300,
+    "patience": 200,
+    "min_delta": 0.002,
+}
+# cosine T_max matched to the pbr budget so the lr actually anneals
+OPTIMIZER_SPECS_ADAM_PBR = [
+    (opt, opt_kw, sched, {"T_max": TRAIN_KWARGS_PBR["max_epochs"]} if sched else None)
+    for opt, opt_kw, sched, _ in OPTIMIZER_SPECS_ADAM
+]
 
 
 def lmo_experiment(obj_ids: set[int]) -> Experiment:
@@ -178,8 +192,8 @@ def pbr_lmo_experiment(obj_ids: set[int]) -> Experiment:
             obj_ids=obj_ids,
             model_specs=MODEL_SPECS_CROSS,
             batch_sizes=BATCH_SIZES_PBR,
-            optimizer_specs=OPTIMIZER_SPECS_ADAM,
-            **TRAIN_KWARGS,
+            optimizer_specs=OPTIMIZER_SPECS_ADAM_PBR,
+            **TRAIN_KWARGS_PBR,
         ),
     )
 
