@@ -9,3 +9,8 @@
 [scalarfield_exp3]
 pT = "rm_outliers_20_2_visib_10" # this will search fot this version name in every folder
 dgedi_dim = 32
+
+# Inference on unseen objects (ycbv). Same dgedi_dim as the training versions.
+[scalarfield_inference]
+pT = "rm_outliers_20_2_visib_10"
+dgedi_dim = 32
