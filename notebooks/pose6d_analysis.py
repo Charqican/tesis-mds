@@ -228,9 +228,26 @@ def _(experiments_select, runs_table):
 
 
 @app.cell
+def _(plt, runs, sns):
+    _fig, _ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(
+        data=runs,
+        x="experiment",
+        y="final_test_loss",
+        hue="model",
+        errorbar=None,
+        ax=_ax,
+    )
+    _ax.grid(False)
+    _ax.set(xlabel="experiment", ylabel="mean(final_test_loss)")
+    _ax.tick_params(axis="x", labelrotation=-45)
+    _fig
+    return
+
+
+@app.cell
 def _(runs):
     runs.groupby("experiment").agg(
-        n_runs=("run_id", "size"),
         loss_min=("final_test_loss", "min"),
         loss_max=("final_test_loss", "max"),
         rmse_mean_min=("test_rmse_mean", "min"),
@@ -244,8 +261,19 @@ def _(runs):
 @app.cell
 def _(plt, runs, sns):
     _fig, _ax = plt.subplots(figsize=(10, 4))
-    sns.boxplot(runs, x="experiment", y="final_test_loss", hue="model", ax=_ax)
+    sns.boxplot(runs[runs["experiment"].isin(["lmo-strat_obj11"])], x="experiment", y="test_rmse_mean", hue="model", ax=_ax,log_scale=(False, True))
     _ax.set(title="final test loss by experiment and model")
+    _ax.tick_params(axis="x", labelrotation=-45)
+    _fig
+    return
+
+
+@app.cell
+def _(plt, runs, sns):
+    _fig, _ax = plt.subplots(figsize=(10, 4))
+    sns.boxplot(runs[runs["experiment"] == "lmo-strat_obj10"], x="model", y="final_test_loss", ax=_ax, log_scale=(False, True))
+    _ax.set(title="final test loss by experiment and model")
+    _ax.tick_params(axis="x", labelrotation=-45)
     _fig
     return
 
@@ -282,9 +310,28 @@ def _(load_instances_button, mo, runs, runs_instances):
         .unstack()
         .add_prefix("rmse_obj")
     )
-    runs[
-        ["experiment", "run_name", "final_test_loss", "test_rmse_mean", "run_id"]
-    ].merge(_per_run, on="run_id").merge(_per_obj, on="run_id")
+    runs_rmse = (
+        runs[["experiment", "run_name", "final_test_loss", "test_rmse_mean", "run_id"]]
+        .merge(_per_run, on="run_id")
+        .merge(_per_obj, on="run_id")
+    )
+    runs_rmse
+    return (runs_rmse,)
+
+
+@app.cell
+def _(plt, runs_rmse, sns):
+    _df = runs_rmse.melt(
+        id_vars=["experiment", "run_id"],
+        value_vars=["rmse_obj10", "rmse_obj11"],
+        var_name="obj",
+        value_name="rmse",
+    )
+    _fig, _ax = plt.subplots(figsize=(9, 4))
+    sns.barplot(_df, x="experiment", y="rmse", hue="obj", errorbar="sd", ax=_ax)
+    _ax.set(title="Mean test RMSE per object (mean ± std over runs)", ylabel="RMSE")
+    _ax.tick_params(axis="x", rotation=30)
+    _fig
     return
 
 
@@ -414,6 +461,11 @@ def _(layout, mo, predict_instance, rank_dropdown, run, split_dropdown):
     mo.md(
         f"`{error_uid}` — rmse {_row['rmse']:.3f}, visib_fract {_row['visib_fract']:.2f}"
     )
+    _df
+    #lmo_scene000002_img001171_obj000010_inst05
+    #error_uid = "lmo_scene000002_img001171_obj000010_inst05"
+    #error_points, error_target, error_pred = predict_instance(run, layout, error_uid)
+    #print(error_uid)
     return error_points, error_pred, error_target, error_uid
 
 
