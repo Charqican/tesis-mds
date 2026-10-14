@@ -128,7 +128,7 @@ def plot_mesh_with_scalar_field(
         _mesh_trace(
             vertices,
             faces,
-            opacity=0.7,
+            opacity=0.3,
             name=f"obj : {obj_id} (instance {inst_idx})",
             showlegend=True,
             color="orange",
