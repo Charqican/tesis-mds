@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from .config import LMOConfig, PBRConfig
+from .config import LMOConfig, PBRConfig, YCBVConfig
 
 import numpy as np
 import torch
@@ -333,6 +333,16 @@ class PBRLoader(BOPLoader):
         return cls(PBRConfig.from_roots(root, model_root))
 
 
+class YCBVLoader(BOPLoader):
+    """BOPLoader over YCB-V test scenes; models live in root/ycbv_models."""
+
+    dataset_name = "ycbv"
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "YCBVLoader":
+        return cls(YCBVConfig.from_root(root))
+
+
 # Scene jsons are re-read for every instance otherwise (slow on pbr scenes).
 # Returned dicts are shared between callers: treat them as read-only.
 @lru_cache(maxsize=32)
@@ -354,10 +364,12 @@ def build_loader(
         if model_root is None:
             raise ValueError("BPR requires model_root")
         return PBRLoader.from_roots(dataset_root, model_root)
+    if dataset_type == "ycbv":
+        return YCBVLoader.from_root(dataset_root)
     raise ValueError(f"Unknown dataset type: {dataset_type}")
 
 
-# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT).
+# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT, YCBV_ROOT).
 # pbr uses the lmo object models.
 def loader_from_env(dataset_type: str) -> BOPLoader:
     def env(var: str) -> str:
@@ -368,4 +380,6 @@ def loader_from_env(dataset_type: str) -> BOPLoader:
 
     if dataset_type == "pbr":
         return build_loader("pbr", env("PBR_ROOT"), env("LMO_ROOT"))
+    if dataset_type == "ycbv":
+        return build_loader("ycbv", env("YCBV_ROOT"))
     return build_loader(dataset_type, env("LMO_ROOT"))

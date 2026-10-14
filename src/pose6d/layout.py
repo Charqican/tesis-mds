@@ -20,7 +20,7 @@ This is the Layout expected and used by every other object:
 - PTCofing and SymmConfig parses tomls configurations. Their use is restricted to dataset creation and verisioning
 """
 
-DATASETS = ("lmo", "pbr")
+DATASETS = ("lmo", "pbr", "ycbv")
 DGEDI_DIMS = (32, 64)
 
 CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"

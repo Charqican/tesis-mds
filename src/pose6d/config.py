@@ -116,6 +116,28 @@ class PBRPath(BOPPath):
         return cls(root=Path(root), model_root=Path(model_root))
 
 
+@dataclass(frozen=True)
+class YCBVPath(BOPPath):
+    """
+    Expected file structure ycbv
+    - test/
+    - ycbv_models/ (models/, models_eval/, models_fine/)
+    - test_targets_bop19.json
+
+    test holds BOP scenes. Models live in root/ycbv_models/models/.
+    """
+
+    root: Path
+
+    def scene_dir(self, scene_id: int) -> Path:
+        return self.root / "test" / f"{scene_id:06d}"
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "YCBVPath":
+        root = Path(root)
+        return cls(root=root, model_root=root / "ycbv_models")
+
+
 # TODO: Track if mesh_samples actually makes it to the implementation or if it ends up lost
 @dataclass(frozen=True)
 class LMOConfig:
@@ -146,3 +168,16 @@ class PBRConfig:
     @classmethod
     def from_roots(cls, root: str | Path, model_root: str | Path) -> "PBRConfig":
         return cls(paths=PBRPath.from_roots(root, model_root))
+
+
+@dataclass(frozen=True)
+class YCBVConfig:
+    """Config for YCB-V test scenes (BOP19 subset)."""
+
+    paths: YCBVPath
+    depth_stride: int = 2
+    sample_points: int = 1024
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "YCBVConfig":
+        return cls(paths=YCBVPath.from_root(root))

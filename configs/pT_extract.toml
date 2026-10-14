@@ -12,3 +12,7 @@ scenes = "2-3"
 [[rm_outliers_20_2_visib_10.sources]]
 dataset = "lmo"
 scenes = [2]
+
+[[rm_outliers_20_2_visib_10.sources]]
+dataset = "ycbv"
+scenes = "48-59"
