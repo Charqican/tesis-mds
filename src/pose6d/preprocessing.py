@@ -205,7 +205,7 @@ def compute_targets(
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     loaders: dict[str, BOPLoader] = {}
-    canonical: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    canonical: dict[tuple[Path, int], tuple[np.ndarray, np.ndarray]] = {}
 
     for i, (uid, points_path) in enumerate(points_paths.items(), start=1):
         dataset, scene_id, img_id, obj_id, inst_idx = BOPLoader.parse_instance_uid(uid)
@@ -213,13 +213,14 @@ def compute_targets(
             loaders[dataset] = loader_from_env(dataset)
         loader = loaders[dataset]
 
-        # every dataset uses the lmo models, so the canonical field is shared
-        if obj_id not in canonical:
+        # keyed by models dir: lmo/pbr share models, but ycbv obj ids mean other objects
+        key = (loader.paths.models_dir, obj_id)
+        if key not in canonical:
             torch.manual_seed(seed)
-            canonical[obj_id] = compute_canonical_symmetry_field(
+            canonical[key] = compute_canonical_symmetry_field(
                 loader, obj_id, canonical_samples
             )
-        mesh_points, symmetry_scalar = canonical[obj_id]
+        mesh_points, symmetry_scalar = canonical[key]
 
         points = np.load(points_path)["points"]
         instance = loader.load_instances(scene_id, img_id)[inst_idx]
