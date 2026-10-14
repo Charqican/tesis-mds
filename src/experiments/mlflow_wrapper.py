@@ -1,119 +1,126 @@
-from typing import cast
+import tempfile
+import time
+from pathlib import Path
 
-import torch
-import numpy as np
 import mlflow
-import mlflow.pytorch as mlflowpy
-from mlflow.models import infer_signature
-from logger import notebook_logger as log
-from experiments.experiment_setup import TrainData
-from pose6d.dataset import SymmetryFieldInstanceDataset
-from pose6d.loader import BOPLoader
+import pandas as pd
+import torch
+
+from experiments.analysis import uid_info
+from experiments.experiment_setup import setup
+from experiments.experiment_training import instance_losses, predict, train
+from pose6d.dataset import SPLIT_NAMES, SymmetryFieldDataset
+from pose6d.layout import DataLayout
+from logger import experiments_logger as log
+
+"""
+One mlflow run per config. Logged:
+    params      the flattened config (classes by name)
+    tags        obj_ids, split, model, optimizer (to group runs)
+    metrics     train/val loss curves; final_{train,val,test}_loss and test_rmse_{mean,median}
+                of the best model; best_epoch, n_epochs, n_{train,val,test}, train_time_s
+    artifacts   splits.json, normalizer.json, instances.parquet (per uid metrics),
+                model.pt (state_dict) + model.json (class, kwargs, in_dim)
+"""
 
 
-# TODO: Refactor all /experiments as it was vibecoded for time constraints
-def run_experiment(config: dict, setup_func, train_eng):
+def run_experiment(config: dict, layout: DataLayout) -> None:
+    data, model_conf, train_conf = config["data"], config["model"], config["train"]
+    train_conf = dict(train_conf)
+    seed = train_conf.pop("seed")
+
     mlflow.set_experiment(config["experiment_name"])
-    with mlflow.start_run(run_name=config.get("run_name")):
-        mlflow.log_params(flatten(config))
-
-        train_data: TrainData = setup_func(**config["setup_conf"])
-        model, loss_hist, val_hist = train_eng(
-            train_data,
-            on_epoch=lambda m, step: mlflow.log_metrics(m, step=step),
-            **config["train_conf"],
-        )
-        model.eval()
-
-        dataset: SymmetryFieldInstanceDataset = train_data.dataset
-
-        dirs_by_uid_serializable = {
-            uid: {
-                "points_dir": str(points_dir),
-                "input_dir": str(input_dir),
-                "target_dir": str(target_dir),
+    with mlflow.start_run(run_name=config["run_name"]):
+        mlflow.log_params(flatten({k: config[k] for k in ("data", "model", "train")}))
+        mlflow.set_tags(
+            {
+                "obj_ids": "-".join(map(str, data["obj_ids"])),
+                "split": data["split"],
+                "model": model_conf["cls"].__name__,
+                "optimizer": train_conf["optimizer_cls"].__name__,
             }
-            for uid, (points_dir, input_dir, target_dir) in dataset._dirs_by_uid.items()
-        }
-        mlflow.log_dict(dirs_by_uid_serializable, "dirs_by_uid.json")
-
-        split_uids = {
-            "train": dataset.uids_for("train"),
-            "val": dataset.uids_for("val"),
-            "test": dataset.uids_for("test"),
-        }
-        mlflow.log_dict(split_uids, "split.json")
-
-        device = next(model.parameters()).device
-        per_instance_errors: dict[str, float] = {}
-        errors_by_obj: dict[int, list[float]] = {}
-
-        with torch.no_grad():
-            for uid in split_uids["test"]:
-                _, inp, target_raw = dataset.get_instance(uid)
-                pred = dataset.denormalize(model(inp.to(device)))
-                rmse = torch.sqrt(torch.mean((pred.cpu() - target_raw) ** 2)).item()
-                per_instance_errors[uid] = rmse
-
-                _, _, _, obj_id, _ = BOPLoader.parse_instance_uid(uid)
-                mlflow.log_metric(f"test_rmse/obj{obj_id:06d}/{uid}", rmse)
-                errors_by_obj.setdefault(obj_id, []).append(rmse)
-
-        mlflow.log_dict(per_instance_errors, "per_instance_errors.json")
-
-        # -- global, mean rmse
-        rmse_values = list(per_instance_errors.values())
-        mlflow.log_metric("test_rmse_mean", float(np.mean(rmse_values)))
-        mlflow.log_metric("test_rmse_median", float(np.median(rmse_values)))
-
-        worst_uid = max(per_instance_errors, key=per_instance_errors.get)
-        mlflow.log_metric("test_rmse_worst", per_instance_errors[worst_uid])
-        mlflow.set_tag("test_rmse_worst_uid", worst_uid)
-
-        # -- per object
-        obj_mean = {
-            obj_id: float(np.mean(errors)) for obj_id, errors in errors_by_obj.items()
-        }
-        obj_median = {
-            obj_id: float(np.median(errors)) for obj_id, errors in errors_by_obj.items()
-        }
-        for obj_id in errors_by_obj:
-            mlflow.log_metric(f"test_rmse_mean/obj{obj_id:06d}", obj_mean[obj_id])
-            mlflow.log_metric(f"test_rmse_median/obj{obj_id:06d}", obj_median[obj_id])
-
-        worst_obj_id = max(obj_mean, key=obj_mean.get)
-        mlflow.log_metric("test_rmse_worst_obj_mean", obj_mean[worst_obj_id])
-        mlflow.set_tag("test_rmse_worst_obj_id", str(worst_obj_id))
-
-        # -- loss final (normalizado, comparable con las curvas de entrenamiento)
-        test_idx = dataset.indices_for("test")
-        test_input = dataset.input[test_idx].to(device)
-        test_targets = dataset.targets[test_idx].to(device)
-        with torch.no_grad():
-            test_pred = model(test_input.reshape(-1, train_data.input_dim)).reshape(
-                test_targets.shape
-            )
-            final_test_loss = (
-                ((test_pred - test_targets) ** 2).mean(dim=1).mean().item()
-            )
-
-        mlflow.log_metric("final_test_loss", final_test_loss)
-        mlflow.log_metric("final_val_loss", val_hist[-1])
-        mlflow.log_metric("final_train_loss", loss_hist[-1])
-
-        # log model
-        input_sample, _ = dataset[0]
-        input_sample_np = input_sample.to("cpu").numpy()
-        signature = infer_signature(input_sample_np)
-        mlflowpy.log_model(
-            model.to("cpu"),
-            "model",
-            input_example=cast(np.ndarray, input_sample_np),
-            signature=signature,
-            serialization_format="pickle",
         )
 
-    return loss_hist, val_hist, model, dataset
+        ds, model = setup(layout, data, model_conf, seed)
+        mlflow.log_metrics({f"n_{n}": len(getattr(ds.splits, n)) for n in SPLIT_NAMES})
+
+        start = time.monotonic()
+        result = train(
+            model,
+            ds.train,
+            ds.val,
+            on_eval=lambda m, step: mlflow.log_metrics(m, step=step),
+            **train_conf,
+        )
+        train_time = time.monotonic() - start
+
+        instances = instance_metrics(result.model, ds)
+        test = instances[instances["split"] == "test"]
+        mlflow.log_metrics(
+            {
+                **{
+                    f"final_{n}_loss": instances.loc[
+                        instances["split"] == n, "loss"
+                    ].mean()
+                    for n in SPLIT_NAMES
+                },
+                "test_rmse_mean": test["rmse"].mean(),
+                "test_rmse_median": test["rmse"].median(),
+                "best_epoch": result.best_epoch,
+                "n_epochs": result.n_epochs,
+                "train_time_s": train_time,
+            }
+        )
+
+        mlflow.log_dict(ds.splits.to_dict(), "splits.json")
+        mlflow.log_dict(ds.normalizer.to_dict(), "normalizer.json")
+        mlflow.log_dict(
+            {
+                "cls": model_conf["cls"].__name__,
+                "kwargs": model_conf["kwargs"] or {},
+                "in_dim": ds.train.inputs.shape[-1],
+            },
+            "model.json",
+        )
+        # INFO: Mlflow limitation: needs things to exist in disk
+        with tempfile.TemporaryDirectory() as tmp:
+            instances.to_parquet(Path(tmp) / "instances.parquet", index=False)
+            torch.save(result.model.cpu().state_dict(), Path(tmp) / "model.pt")
+            mlflow.log_artifacts(tmp)
+        log.info(
+            f"Finished {config['run_name']}: test loss {test['loss'].mean():.4f}, "
+            f"test rmse {test['rmse'].mean():.4f}"
+        )
+
+
+def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.DataFrame:
+    """One row per uid of every split. loss is normalized, the rest in target units."""
+    device = next(model.parameters()).device
+    frames = []
+    for split_name in SPLIT_NAMES:
+        if not getattr(ds.splits, split_name):
+            continue
+        split = getattr(ds, split_name)
+        pred_norm = predict(model, split, device)
+        pred = ds.normalizer.denormalize_targets(pred_norm)
+        target = ds.normalizer.denormalize_targets(split.targets)
+        error = pred - target
+        frames.append(
+            pd.DataFrame(
+                {
+                    "uid": split.uids,
+                    "split": split_name,
+                    "loss": instance_losses(pred_norm, split.targets).numpy(),
+                    "rmse": error.pow(2).mean(dim=1).sqrt().numpy(),
+                    "mae": error.abs().mean(dim=1).numpy(),
+                    "bias": error.mean(dim=1).numpy(),
+                    "target_mean": target.mean(dim=1).numpy(),
+                    "pred_mean": pred.mean(dim=1).numpy(),
+                }
+            )
+        )
+    metrics = pd.concat(frames, ignore_index=True)
+    return uid_info(metrics["uid"].tolist()).merge(metrics, on="uid")
 
 
 def flatten(d: dict, parent_key: str = "", sep: str = ".") -> dict:
@@ -122,6 +129,8 @@ def flatten(d: dict, parent_key: str = "", sep: str = ".") -> dict:
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
             items.update(flatten(v, new_key, sep=sep))
+        elif isinstance(v, type):
+            items[new_key] = v.__name__
         else:
             items[new_key] = v
     return items

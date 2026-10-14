@@ -7,6 +7,7 @@ from rich.table import Table
 
 from experiments.registry import REGISTRY, Experiment
 from experiments.mlflow_wrapper import run_experiment
+from pose6d.layout import DataLayout
 
 load_dotenv()  # this reads the .env mlflow variable before importing mlflow.
 import mlflow
@@ -14,8 +15,8 @@ import mlflow
 
 console = Console()
 """
-The following script is a Rich cli program with the only purpose of simplify the 
-mlflow artifacts manangment and experiments execution. 
+Rich CLI to list, run and reset the experiments of experiments/registry.py.
+A config counts as done when its run finished (failed runs are run again).
 """
 
 
@@ -39,24 +40,24 @@ def list_configs(experiment_name: str) -> None:
     table = Table(title=f"Configs for {experiment_name}")
     table.add_column("run_name")
     table.add_column("batch_size")
-    table.add_column("Model")
+    table.add_column("model")
     table.add_column("optimizer")
     table.add_column("scheduler")
+    table.add_column("split")
     table.add_column("obj_ids")
     table.add_column("status")
     for cfg in experiment.configs:
-        setup_conf = cfg["setup_conf"]
-        train_conf = cfg["train_conf"]
-        status = "done" if cfg["run_name"] in done else "pending"
-        scheduler_cls = train_conf.get("scheduler_cls")
+        train_conf = cfg["train"]
+        scheduler_cls = train_conf["scheduler_cls"]
         table.add_row(
             cfg["run_name"],
-            str(setup_conf.get("batch_size", "")),
-            setup_conf["model_cls"].__name__,
+            str(train_conf["batch_size"]),
+            cfg["model"]["cls"].__name__,
             train_conf["optimizer_cls"].__name__,
             scheduler_cls.__name__ if scheduler_cls else "-",
-            str(sorted(setup_conf.get("sel_obj_ids", []))),
-            status,
+            cfg["data"]["split"],
+            str(cfg["data"]["obj_ids"]),
+            "done" if cfg["run_name"] in done else "pending",
         )
     console.print(table)
 
@@ -73,7 +74,7 @@ def select_configs(
     if not interactive:
         pending = [cfg for cfg in configs if cfg["run_name"] not in done]
         console.print(
-            f"Skipping {len(configs) - len(pending)} already done, running {len(pending)} pending."
+            f"Skipping {len(configs) - len(pending)} done, running {len(pending)} pending."
         )
         return pending
 
@@ -94,10 +95,11 @@ def select_configs(
     return [cfg for cfg in configs if cfg["run_name"] in selected_names]
 
 
-def run_selected(experiment: Experiment, configs: list[dict]) -> None:
-    for cfg in configs:
-        console.print(f"[bold]Running[/bold] {cfg['run_name']}")
-        run_experiment(cfg, experiment.setup_func, experiment.train_eng)
+def run_selected(configs: list[dict]) -> None:
+    layout = DataLayout.from_env()
+    for i, cfg in enumerate(configs, 1):
+        console.print(f"[bold]Running[/bold] {cfg['run_name']} ({i}/{len(configs)})")
+        run_experiment(cfg, layout)
 
 
 def reset_runs(mlflow_names: set[str], run_names: set[str]) -> None:
@@ -112,22 +114,20 @@ def reset_runs(mlflow_names: set[str], run_names: set[str]) -> None:
                 console.print(f"Deleted run {row['tags.mlflow.runName']}")
 
 
-def run_flow(experiment_name: str | None, interactive: bool, run_all: bool) -> None:
-    if experiment_name is None:
-        for name in REGISTRY:
-            console.print(f"[bold cyan]Experiment: {name}[/bold cyan]")
-            run_flow(name, interactive=interactive, run_all=run_all)
-        return
-
-    experiment = REGISTRY[experiment_name]
-    done = existing_run_names(mlflow_experiment_names(experiment))
-    configs = select_configs(
-        experiment.configs, done, interactive=interactive, run_all=run_all
-    )
+# configs of every experiment are picked first, then everything runs unattended
+def run_flow(experiment_names: list[str], interactive: bool, run_all: bool) -> None:
+    configs = []
+    for name in experiment_names:
+        console.print(f"[bold cyan]Experiment: {name}[/bold cyan]")
+        experiment = REGISTRY[name]
+        done = existing_run_names(mlflow_experiment_names(experiment))
+        configs += select_configs(
+            experiment.configs, done, interactive=interactive, run_all=run_all
+        )
     if not configs:
         console.print("Nothing to run.")
         return
-    run_selected(experiment, configs)
+    run_selected(configs)
 
 
 def reset_flow(experiment_name: str) -> None:
@@ -152,7 +152,9 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> None:
-    run_flow(args.experiment, interactive=args.select, run_all=args.all)
+    run_flow(
+        args.experiments or list(REGISTRY), interactive=args.select, run_all=args.all
+    )
 
 
 def cmd_reset(args: argparse.Namespace) -> None:
@@ -168,7 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.set_defaults(func=cmd_list)
 
     p_run = sub.add_parser("run")
-    p_run.add_argument("experiment", nargs="?", choices=list(REGISTRY.keys()))
+    # no experiments = all of them
+    p_run.add_argument("experiments", nargs="*", choices=list(REGISTRY.keys()))
     p_run.add_argument("--select", action="store_true")
     p_run.add_argument("--all", action="store_true")
     p_run.set_defaults(func=cmd_run)
@@ -183,43 +186,43 @@ def build_parser() -> argparse.ArgumentParser:
 def interactive_loop() -> None:
     while True:
         action = questionary.select(
-            "Accion", choices=["list", "run", "reset", "salir"]
+            "Action", choices=["list", "run", "reset", "quit"]
         ).ask()
-        if action is None or action == "salir":
+        if action is None or action == "quit":
             break
 
         if action == "list":
             experiment_name = questionary.select(
-                "Experimento", choices=["(todos)"] + list(REGISTRY.keys())
+                "Experiment", choices=["(all)"] + list(REGISTRY.keys())
             ).ask()
             if experiment_name is None:
                 continue
-            if experiment_name == "(todos)":
+            if experiment_name == "(all)":
                 list_experiments()
             else:
                 list_configs(experiment_name)
 
         elif action == "run":
-            experiment_name = questionary.select(
-                "Experimento", choices=["(todos)"] + list(REGISTRY.keys())
+            experiment_names = questionary.checkbox(
+                "Experiments to run", choices=list(REGISTRY.keys())
             ).ask()
-            if experiment_name is None:
+            if not experiment_names:
                 continue
             mode = questionary.select(
-                "Modo",
-                choices=["solo pendientes", "seleccionar manualmente", "correr todo"],
+                "Mode",
+                choices=["pending only", "select manually", "run all"],
             ).ask()
             if mode is None:
                 continue
             run_flow(
-                None if experiment_name == "(todos)" else experiment_name,
-                interactive=(mode == "seleccionar manualmente"),
-                run_all=(mode == "correr todo"),
+                experiment_names,
+                interactive=(mode == "select manually"),
+                run_all=(mode == "run all"),
             )
 
         elif action == "reset":
             experiment_name = questionary.select(
-                "Experimento", choices=list(REGISTRY.keys())
+                "Experiment", choices=list(REGISTRY.keys())
             ).ask()
             if experiment_name is None:
                 continue
@@ -236,7 +239,9 @@ def existing_run_names(mlflow_names: set[str]) -> set[str]:
         exp = mlflow.get_experiment_by_name(exp_name)
         if exp is None:
             continue
-        runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+        runs = mlflow.search_runs(
+            experiment_ids=[exp.experiment_id], filter_string="status = 'FINISHED'"
+        )
         if runs.empty or "tags.mlflow.runName" not in runs.columns:
             continue
         names.update(runs["tags.mlflow.runName"].dropna())
