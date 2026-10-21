@@ -23,6 +23,7 @@ Analysis of the runs logged by experiments/mlflow_wrapper.py (notebooks/pose6d_a
 
 RUN_COLUMNS = {
     "tags.mlflow.runName": "run_name",
+    "params.data.version": "version",
     "params.data.split": "split",
     "params.data.obj_ids": "obj_ids",
     "params.model.cls": "model",
@@ -34,6 +35,8 @@ RUN_COLUMNS = {
     "metrics.final_train_loss": "final_train_loss",
     "metrics.test_rmse_mean": "test_rmse_mean",
     "metrics.test_rmse_median": "test_rmse_median",
+    "metrics.test_rmse_mm_mean": "test_rmse_mm_mean",
+    "metrics.test_pearson_mean": "test_pearson_mean",
     "metrics.best_epoch": "best_epoch",
     "run_id": "run_id",
 }

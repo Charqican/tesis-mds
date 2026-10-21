@@ -23,6 +23,7 @@ configs, each one a plain dict:
 """
 
 DATA_VERSION = "scalarfield_exp3"
+DATA_VERSION_NORM = "scalarfield_exp3_norm"  # target / pT diameter
 
 # Splits are static to compare them between runs and experiments
 SPLITS = {
@@ -164,10 +165,24 @@ OPTIMIZER_SPECS_ADAM_PBR = [
     (opt, opt_kw, sched, {"T_max": TRAIN_KWARGS_PBR["max_epochs"]} if sched else None)
     for opt, opt_kw, sched, _ in OPTIMIZER_SPECS_ADAM
 ]
+# On pbr optimizer, scheduler and batch size move the rmse ~0.1-0.2 mm (noise), the
+# model ~1.5 mm: one optimizer setting and the two best models of the full grid
+MODEL_SPECS_SHORTLIST = [
+    (SymmetryFieldMLP5, {"dropout": 0.3}),
+    (SymmetryFieldMLP1, None),
+]
+OPTIMIZER_SPECS_SHORTLIST_PBR = [
+    spec
+    for spec in OPTIMIZER_SPECS_ADAM_PBR
+    if spec[0] is torch.optim.AdamW and spec[2] is None
+]
 
 
-def lmo_experiment(obj_ids: set[int]) -> Experiment:
+# same run names in both versions, so norm and raw runs can be paired by run_name
+def lmo_experiment(obj_ids: set[int], data_version: str = DATA_VERSION) -> Experiment:
     name = f"lmo-strat_obj{_tag(obj_ids)}"
+    if data_version == DATA_VERSION_NORM:
+        name += "_norm"
     return Experiment(
         name=name,
         configs=build_configs(
@@ -177,22 +192,32 @@ def lmo_experiment(obj_ids: set[int]) -> Experiment:
             model_specs=MODEL_SPECS_CROSS,
             batch_sizes=BATCH_SIZES_LMO,
             optimizer_specs=OPTIMIZER_SPECS_ADAM,
+            data_version=data_version,
             **TRAIN_KWARGS,
         ),
     )
 
 
-def pbr_lmo_experiment(obj_ids: set[int]) -> Experiment:
+def pbr_lmo_experiment(
+    obj_ids: set[int],
+    data_version: str = DATA_VERSION,
+    model_specs=MODEL_SPECS_CROSS,
+    batch_sizes=BATCH_SIZES_PBR,
+    optimizer_specs=OPTIMIZER_SPECS_ADAM_PBR,
+) -> Experiment:
     name = f"pbr-train_lmo-test_obj{_tag(obj_ids)}"
+    if data_version == DATA_VERSION_NORM:
+        name += "_norm"
     return Experiment(
         name=name,
         configs=build_configs(
             experiment_name=name,
             split="pbr-train_lmo-test",
             obj_ids=obj_ids,
-            model_specs=MODEL_SPECS_CROSS,
-            batch_sizes=BATCH_SIZES_PBR,
-            optimizer_specs=OPTIMIZER_SPECS_ADAM_PBR,
+            model_specs=model_specs,
+            batch_sizes=batch_sizes,
+            optimizer_specs=optimizer_specs,
+            data_version=data_version,
             **TRAIN_KWARGS_PBR,
         ),
     )
@@ -202,6 +227,9 @@ _EXPERIMENTS = [
     lmo_experiment({10}),
     lmo_experiment({11}),
     lmo_experiment({10, 11}),
+    lmo_experiment({10}, DATA_VERSION_NORM),
+    lmo_experiment({11}, DATA_VERSION_NORM),
+    lmo_experiment({10, 11}, DATA_VERSION_NORM),
     # Testing server experiment
     Experiment(
         name="pbr-train_lmo-test_server-check",
@@ -223,5 +251,16 @@ _EXPERIMENTS = [
     pbr_lmo_experiment({10, 11}),
     pbr_lmo_experiment({10}),
     pbr_lmo_experiment({11}),
+    # norm on pbr, shortlist only (2 runs each); obj10-11 first
+    *(
+        pbr_lmo_experiment(
+            objs,
+            DATA_VERSION_NORM,
+            model_specs=MODEL_SPECS_SHORTLIST,
+            batch_sizes=[1024],
+            optimizer_specs=OPTIMIZER_SPECS_SHORTLIST_PBR,
+        )
+        for objs in ({10, 11}, {10}, {11})
+    ),
 ]
 REGISTRY: dict[str, Experiment] = {e.name: e for e in _EXPERIMENTS}

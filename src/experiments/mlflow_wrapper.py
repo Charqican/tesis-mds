@@ -17,8 +17,8 @@ from logger import experiments_logger as log
 One mlflow run per config. Logged:
     params      the flattened config (classes by name)
     tags        obj_ids, split, model, optimizer (to group runs)
-    metrics     train/val loss curves; final_{train,val,test}_loss and test_rmse_{mean,median}
-                of the best model; best_epoch, n_epochs, n_{train,val,test}, train_time_s
+    metrics     train/val loss curves; final_{train,val,test}_loss, test_rmse_{mean,median},
+                test_rmse_mm_{mean,median} and test_pearson_mean of the best model; best_epoch, n_epochs, n_{train,val,test}, train_time_s
     artifacts   splits.json, normalizer.json, instances.parquet (per uid metrics),
                 model.pt (state_dict) + model.json (class, kwargs, in_dim)
 """
@@ -66,6 +66,9 @@ def run_experiment(config: dict, layout: DataLayout) -> None:
                 },
                 "test_rmse_mean": test["rmse"].mean(),
                 "test_rmse_median": test["rmse"].median(),
+                "test_rmse_mm_mean": test["rmse_mm"].mean(),
+                "test_rmse_mm_median": test["rmse_mm"].median(),
+                "test_pearson_mean": test["pearson"].mean(),
                 "best_epoch": result.best_epoch,
                 "n_epochs": result.n_epochs,
                 "train_time_s": train_time,
@@ -94,7 +97,10 @@ def run_experiment(config: dict, layout: DataLayout) -> None:
 
 
 def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.DataFrame:
-    """One row per uid of every split. loss is normalized, the rest in target units."""
+    """
+    One row per uid of every split. loss is normalized, rmse_mm in mm, pearson has no
+    units, the rest in target units (mm or pT diameters if the target is normalized).
+    """
     device = next(model.parameters()).device
     frames = []
     for split_name in SPLIT_NAMES:
@@ -105,13 +111,16 @@ def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.Dat
         pred = ds.normalizer.denormalize_targets(pred_norm)
         target = ds.normalizer.denormalize_targets(split.targets)
         error = pred - target
+        rmse = error.pow(2).mean(dim=1).sqrt().numpy()
         frames.append(
             pd.DataFrame(
                 {
                     "uid": split.uids,
                     "split": split_name,
                     "loss": instance_losses(pred_norm, split.targets).numpy(),
-                    "rmse": error.pow(2).mean(dim=1).sqrt().numpy(),
+                    "rmse": rmse,
+                    "rmse_mm": rmse * ds.scales(split.uids),
+                    "pearson": pearson(pred, target).numpy(),
                     "mae": error.abs().mean(dim=1).numpy(),
                     "bias": error.mean(dim=1).numpy(),
                     "target_mean": target.mean(dim=1).numpy(),
@@ -121,6 +130,13 @@ def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.Dat
         )
     metrics = pd.concat(frames, ignore_index=True)
     return uid_info(metrics["uid"].tolist()).merge(metrics, on="uid")
+
+
+# per row (instance) pearson correlation between pred and target
+def pearson(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    p = pred - pred.mean(dim=1, keepdim=True)
+    t = target - target.mean(dim=1, keepdim=True)
+    return (p * t).sum(dim=1) / (p.norm(dim=1) * t.norm(dim=1)).clamp_min(1e-12)
 
 
 def flatten(d: dict, parent_key: str = "", sep: str = ".") -> dict:
