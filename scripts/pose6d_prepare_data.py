@@ -128,7 +128,13 @@ def run_for_version(
     log.info(
         f"'{exp.name}': {len(points)} uids, {len(pending_targets)} targets pending"
     )
-    compute_targets(pending_targets, target_dir, exp.canonical_samples, exp.seed)
+    compute_targets(
+        pending_targets,
+        target_dir,
+        exp.canonical_samples,
+        exp.seed,
+        exp.normalize_target,
+    )
 
     write_manifest(
         layout.version_manifest(exp.name),
