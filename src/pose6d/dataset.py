@@ -292,6 +292,14 @@ class SymmetryFieldDataset:
             torch.from_numpy(np.stack(targets)).float(),
         )
 
+    # target * scale is in mm. Targets saved before normalization have no scale (mm already)
+    def scales(self, uids: list[str]) -> np.ndarray:
+        scales = []
+        for uid in uids:
+            data = np.load(self.target_dir / f"{uid}.npz")
+            scales.append(float(data["scale"]) if "scale" in data else 1.0)
+        return np.array(scales)
+
     def _present(self, uids: list[str]) -> list[str]:
         present = [
             u

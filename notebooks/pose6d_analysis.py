@@ -13,6 +13,7 @@ def _(mo):
     2. Experiments: every config of the selected mlflow experiments (min / max).
     3. One run: loss curves and per instance errors (`instances.parquet`).
     4. One instance of that run: per point errors on the mesh.
+    5. Normalized vs raw target: same configs on both versions, errors in mm.
 
     Paths come from `.env` (`POSE6D_ROOT`, `LMO_ROOT`, `PBR_ROOT`, `MLFLOW_TRACKING_URI`).
     """)
@@ -40,7 +41,7 @@ def _():
         uid_info,
     )
     from pose6d.dataset import SymmetryFieldDataset
-    from pose6d.layout import DataLayout
+    from pose6d.layout import DataLayout, load_symm_configs
     from pose6d.loader import BOPLoader, loader_from_env
     from pose6d.notebook_plots import (
         plot_gt_vs_pred_comparison,
@@ -66,6 +67,7 @@ def _():
         layout,
         load_instance,
         load_run,
+        load_symm_configs,
         mlflow,
         mo,
         pd,
@@ -131,14 +133,18 @@ def _(info, mo):
     data_dataset = mo.ui.dropdown(
         sorted(info["dataset"].unique()), value="lmo", label="dataset"
     )
+    return (data_dataset,)
+
+
+@app.cell
+def _(data_dataset, info, mo):
+    _objs = sorted(info.loc[info["dataset"] == data_dataset.value, "obj_id"].unique())
     data_obj = mo.ui.dropdown(
-        [str(o) for o in sorted(info["obj_id"].unique())],
-        value=str(info["obj_id"].min()),
-        label="object",
+        [str(o) for o in _objs], value=str(_objs[0]), label="object"
     )
     data_visib = mo.ui.slider(0, 100, step=5, value=50, label="visib percentile")
     mo.hstack([data_dataset, data_obj, data_visib])
-    return data_dataset, data_obj, data_visib
+    return data_obj, data_visib
 
 
 @app.cell
@@ -383,7 +389,7 @@ def _(MlflowClient, pd, plt, run, sns):
 def _(plt, run, sns):
     _fig, _axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
     for _ax, _split in zip(_axes, ("train", "val", "test")):
-        _rmse = run.instances.loc[run.instances["split"] == _split, "rmse"]
+        _rmse = run.instances.loc[run.instances["split"] == _split, "rmse_mm"]
         sns.histplot(_rmse, bins=30, ax=_ax)
         _ax.set(
             title=f"{_split} - per instance RMSE (mean {_rmse.mean():.2f}, std {_rmse.std():.2f})"
@@ -534,6 +540,231 @@ def _(
     plot_mesh_instance_with_dgedi_features(
         *frame_args(error_uid), _points, _features, percentiles=(0.0, 100.0)
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 5. Normalized vs raw target
+
+    `{experiment}_norm` trains the same configs (same `run_name`) on a target divided by
+    the pT diameter, like dGeDi does with its input. Losses are not comparable between
+    them, so runs are compared with `rmse_mm` (rmse * diameter) and `pearson` (no units).
+    Runs logged before the normalization have no `rmse_mm` (their rmse is already in mm)
+    nor `pearson`.
+    """)
+    return
+
+
+@app.cell
+def _(mlflow, mo):
+    _names = {e.name for e in mlflow.search_experiments()}
+    norm_base_select = mo.ui.multiselect(
+        sorted(n for n in _names if f"{n}_norm" in _names),
+        label="experiments with a _norm version",
+    )
+    norm_base_select
+    return (norm_base_select,)
+
+
+@app.cell
+def _(load_symm_configs, mo, norm_base_select, runs_table):
+    mo.stop(not norm_base_select.value)
+    _base = list(norm_base_select.value)
+    _symm = load_symm_configs()
+    norm_runs = runs_table(_base + [f"{n}_norm" for n in _base])
+    norm_runs["target"] = norm_runs["version"].map(
+        lambda v: "norm" if _symm[v].normalize_target else "raw"
+    )
+    norm_runs["base_experiment"] = norm_runs["experiment"].str.removesuffix("_norm")
+    norm_runs["test_rmse_mm_mean"] = norm_runs["test_rmse_mm_mean"].fillna(
+        norm_runs["test_rmse_mean"].where(norm_runs["target"] == "raw")
+    )
+    norm_runs.groupby(["base_experiment", "target"]).agg(
+        n_runs=("run_id", "size"),
+        rmse_mm_min=("test_rmse_mm_mean", "min"),
+        rmse_mm_median=("test_rmse_mm_mean", "median"),
+        pearson_max=("test_pearson_mean", "max"),
+        pearson_median=("test_pearson_mean", "median"),
+    )
+    return (norm_runs,)
+
+
+@app.cell
+def _(norm_runs):
+    # one row per config, raw and norm side by side
+    norm_pairs = norm_runs.pivot_table(
+        index=["base_experiment", "run_name", "model"],
+        columns="target",
+        values=["test_rmse_mm_mean", "test_pearson_mean"],
+    )
+    norm_pairs.columns = [f"{m.removeprefix('test_')}_{t}" for m, t in norm_pairs.columns]
+    norm_pairs = norm_pairs.reset_index()
+    norm_pairs["rmse_mm_diff"] = (
+        norm_pairs["rmse_mm_mean_norm"] - norm_pairs["rmse_mm_mean_raw"]
+    )
+    norm_pairs.sort_values("rmse_mm_diff")
+    return (norm_pairs,)
+
+
+@app.cell
+def _(norm_pairs, plt, sns):
+    _fig, _ax = plt.subplots(figsize=(6, 6))
+    sns.scatterplot(
+        norm_pairs,
+        x="rmse_mm_mean_raw",
+        y="rmse_mm_mean_norm",
+        hue="base_experiment",
+        style="model",
+        ax=_ax,
+    )
+    _lim = norm_pairs[["rmse_mm_mean_raw", "rmse_mm_mean_norm"]].max().max()
+    _ax.plot([0, _lim], [0, _lim], color="gray", ls="--")
+    _ax.set(
+        title="test RMSE [mm] per config (below the line: norm is better)",
+        xlabel="raw",
+        ylabel="norm",
+    )
+    _ax.legend(fontsize=7, bbox_to_anchor=(1.02, 1), loc="upper left")
+    _fig
+    return
+
+
+@app.cell
+def _(norm_runs, plt, sns):
+    _fig, _axes = plt.subplots(1, 2, figsize=(14, 4))
+    for _ax, _metric in zip(_axes, ("test_rmse_mm_mean", "test_pearson_mean")):
+        sns.boxplot(
+            norm_runs, x="base_experiment", y=_metric, hue="target", ax=_ax
+        )
+        _ax.tick_params(axis="x", labelrotation=-30)
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Per instance, best run of each experiment
+
+    Best run by `test_rmse_mm_mean`. If the normalization helps, it should help most on
+    instances whose diameter is far from the typical one (e.g. low visibility).
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    norm_instances_button = mo.ui.run_button(label="load per instance metrics")
+    norm_instances_button
+    return (norm_instances_button,)
+
+
+@app.cell
+def _(mo, norm_instances_button, norm_runs, runs_instances):
+    mo.stop(not norm_instances_button.value)
+    _best = norm_runs.sort_values("test_rmse_mm_mean").groupby("experiment").head(1)
+    norm_instances = (
+        runs_instances(_best["run_id"])
+        .query("split == 'test'")
+        .merge(_best[["run_id", "base_experiment", "target"]], on="run_id")
+    )
+    if "rmse_mm" not in norm_instances:
+        norm_instances["rmse_mm"] = float("nan")
+    norm_instances["rmse_mm"] = norm_instances["rmse_mm"].fillna(
+        norm_instances["rmse"].where(norm_instances["target"] == "raw")
+    )
+    norm_instances.groupby(["base_experiment", "target", "obj_id"])["rmse_mm"].describe()
+    return (norm_instances,)
+
+
+@app.cell
+def _(norm_instances, sns):
+    _g = sns.relplot(
+        norm_instances,
+        x="visib_fract",
+        y="rmse_mm",
+        hue="target",
+        col="base_experiment",
+        alpha=0.5,
+        height=3.5,
+        aspect=1.3,
+    )
+    _g.figure
+    return
+
+
+@app.cell
+def _(norm_instances, sns):
+    _g = sns.displot(
+        norm_instances,
+        x="rmse_mm",
+        hue="target",
+        col="base_experiment",
+        log_scale=True,
+        element="step",
+        stat="density",
+        common_norm=False,
+        height=3.5,
+        aspect=1.3,
+    )
+    _g.set_titles("{col_name}: test rmse_mm per instance")
+    _g.figure
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Same test uids in both versions: one point per instance, raw vs norm. Points far
+    above the line are the norm outliers. `diameter` is the pT diameter the norm target
+    was divided by (rmse_mm / rmse).
+    """)
+    return
+
+
+@app.cell
+def _(norm_instances):
+    norm_instance_pairs = norm_instances.pivot_table(
+        index=["base_experiment", "uid", "obj_id", "visib_fract"],
+        columns="target",
+        values="rmse_mm",
+    ).reset_index()
+    _diam = (
+        norm_instances.query("target == 'norm'")
+        .assign(diameter=lambda d: d["rmse_mm"] / d["rmse"])
+        .set_index(["base_experiment", "uid"])["diameter"]
+    )
+    norm_instance_pairs = norm_instance_pairs.join(
+        _diam, on=["base_experiment", "uid"]
+    )
+    norm_instance_pairs["ratio"] = norm_instance_pairs["norm"] / norm_instance_pairs["raw"]
+    norm_instance_pairs.sort_values("ratio", ascending=False).head(20)
+    return (norm_instance_pairs,)
+
+
+@app.cell
+def _(norm_instance_pairs, sns):
+    _g = sns.relplot(
+        norm_instance_pairs,
+        x="raw",
+        y="norm",
+        hue="diameter",
+        col="base_experiment",
+        palette="viridis",
+        alpha=0.6,
+        height=4,
+    )
+    for _ax in _g.axes.flat:
+        _ax.set(xscale="log", yscale="log", xlabel="rmse_mm raw", ylabel="rmse_mm norm")
+        _lim = (
+            min(_ax.get_xlim()[0], _ax.get_ylim()[0]),
+            max(_ax.get_xlim()[1], _ax.get_ylim()[1]),
+        )
+        _ax.plot(_lim, _lim, color="gray", ls="--")
+    _g.figure
     return
 
 

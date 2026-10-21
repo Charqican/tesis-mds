@@ -2,6 +2,7 @@ from typing import cast
 
 import numpy as np
 from scipy.spatial import KDTree
+from scipy.spatial.distance import pdist
 from pytorch3d.structures import Meshes
 from pytorch3d.ops import sample_points_from_meshes, sample_farthest_points
 import torch
@@ -48,6 +49,11 @@ def isolate_object_points(
 
 
 ### Feature propagation
+# Same as compute_diameter in external/dgedi/utils.py: max distance between two points
+def point_cloud_diameter(points: np.ndarray) -> float:
+    return float(pdist(points).max())
+
+
 def nn_residuals(query: np.ndarray, target: np.ndarray) -> np.ndarray:
     d, _ = KDTree(target).query(query, k=1)
     return d

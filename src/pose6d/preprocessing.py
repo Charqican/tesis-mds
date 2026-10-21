@@ -12,6 +12,7 @@ from pose6d.geometry_utils import (
     backproject_depth,
     sample_farthest_points,
     propagate_symmetry_to_target,
+    point_cloud_diameter,
 )
 import open3d as o3d
 
@@ -198,10 +199,12 @@ def compute_targets(
     target_dir: Path,
     canonical_samples: int = 20000,
     seed: int = 0,
+    normalize_target: bool = True,
 ) -> None:
     """
     Propagates the canonical symmetry field of each object to its pT (uid -> pT path)
     and saves it in target_dir. The mesh sampling is seeded so targets are reproducible.
+    Saves `scale` too (1.0 when not normalized): target * scale is in mm.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     loaders: dict[str, BOPLoader] = {}
@@ -227,7 +230,13 @@ def compute_targets(
         target = propagate_symmetry_to_target(
             mesh_points, symmetry_scalar, points, instance.R, instance.t
         )
-        np.savez(target_dir / f"{uid}.npz", target=target.astype(np.float32))
+        # Like dGeDi does with its input: divide by the diameter of the pT
+        scale = point_cloud_diameter(points) if normalize_target else 1.0
+        np.savez(
+            target_dir / f"{uid}.npz",
+            target=(target / scale).astype(np.float32),
+            scale=np.float32(scale),
+        )
         if i % 1000 == 0:
             log.info(f"targets: {i}/{len(points_paths)}")
 

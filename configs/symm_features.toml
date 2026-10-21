@@ -5,12 +5,27 @@
 #   dgedi_dim          32 or 64, forwarded to the dgedi command
 #   canonical_samples  points sampled on the mesh for the canonical field (default 20000)
 #   seed               seed of that sampling (default 0)
+#   normalize_target   divide the target by the pT diameter, like dGeDi does with its input (default true)
+#
+# dgedi inputs only depend on pT and dgedi_dim: a _norm version can reuse them with
+#   cp -al {root}/versions/{version}/input {root}/versions/{version}_norm/input
 
 [scalarfield_exp3]
 pT = "rm_outliers_20_2_visib_10" # this will search fot this version name in every folder
 dgedi_dim = 32
+normalize_target = false
 
 # Inference on unseen objects (ycbv). Same dgedi_dim as the training versions.
 [scalarfield_inference]
+pT = "rm_outliers_20_2_visib_10"
+dgedi_dim = 32
+normalize_target = false
+
+# Same as above, target normalized by the pT diameter
+[scalarfield_exp3_norm]
+pT = "rm_outliers_20_2_visib_10"
+dgedi_dim = 32
+
+[scalarfield_inference_norm]
 pT = "rm_outliers_20_2_visib_10"
 dgedi_dim = 32
