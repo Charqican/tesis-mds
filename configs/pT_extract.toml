@@ -13,6 +13,7 @@ scenes = "2-3"
 dataset = "lmo"
 scenes = [2]
 
-[[rm_outliers_20_2_visib_10.sources]]
-dataset = "ycbv"
-scenes = "48-59"
+# server-norm branch: ycbv is only used for inference, not needed to train the _norm runs
+# [[rm_outliers_20_2_visib_10.sources]]
+# dataset = "ycbv"
+# scenes = "48-59"
