@@ -116,9 +116,14 @@ class SymmConfig:
     dgedi_dim: int
     canonical_samples: int = 20000
     seed: int = 0
+    normalize_target: bool = True
 
     def target_params(self) -> dict:
-        return {"canonical_samples": self.canonical_samples, "seed": self.seed}
+        return {
+            "canonical_samples": self.canonical_samples,
+            "seed": self.seed,
+            "normalize_target": self.normalize_target,
+        }
 
 
 def load_pT_configs(path: Path = PT_TOML) -> dict[str, PTConfig]:
