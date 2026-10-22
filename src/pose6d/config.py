@@ -138,6 +138,39 @@ class YCBVPath(BOPPath):
         return cls(root=root, model_root=root / "ycbv_models")
 
 
+@dataclass(frozen=True)
+class TLESSPath(BOPPath):
+    """
+    Expected file structure tless
+    - test_primesense/   (real, BOP19 test)
+    - train_pbr/         (synthetic)
+    - tless_models/ (models_cad/, models_eval/, models_reconst/)
+    - test_targets_bop19.json
+
+    scenes_subdir picks the BOP scenes (test_primesense or train_pbr). Both use the
+    CAD models in root/tless_models/models_cad/.
+    """
+
+    root: Path
+    scenes_subdir: str = "test_primesense"
+
+    def scene_dir(self, scene_id: int) -> Path:
+        return self.root / self.scenes_subdir / f"{scene_id:06d}"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.model_root / "models_cad"
+
+    @classmethod
+    def from_root(
+        cls, root: str | Path, scenes_subdir: str = "test_primesense"
+    ) -> "TLESSPath":
+        root = Path(root)
+        return cls(
+            root=root, model_root=root / "tless_models", scenes_subdir=scenes_subdir
+        )
+
+
 # TODO: Track if mesh_samples actually makes it to the implementation or if it ends up lost
 @dataclass(frozen=True)
 class LMOConfig:
@@ -181,3 +214,18 @@ class YCBVConfig:
     @classmethod
     def from_root(cls, root: str | Path) -> "YCBVConfig":
         return cls(paths=YCBVPath.from_root(root))
+
+
+@dataclass(frozen=True)
+class TLESSConfig:
+    """Config for T-LESS scenes: real test (primesense) or synthetic train_pbr."""
+
+    paths: TLESSPath
+    depth_stride: int = 2
+    sample_points: int = 1024
+
+    @classmethod
+    def from_root(
+        cls, root: str | Path, scenes_subdir: str = "test_primesense"
+    ) -> "TLESSConfig":
+        return cls(paths=TLESSPath.from_root(root, scenes_subdir))

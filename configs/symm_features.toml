@@ -30,12 +30,13 @@ dgedi_dim = 32
 pT = "rm_outliers_20_2_visib_10"
 dgedi_dim = 32
 
-# Same targets as exp3, on the v2 pT (current extractor, no padded clouds)
-[scalarfield_exp4]
+# Distance to the symmetry plane (same target as exp3) on the v2 pT (current extractor,
+# no padded clouds). Named by the target recipe: future fields get their own name.
+[scalarfield_plane]
 pT = "rm_outliers_20_2_visib_10_v2"
 dgedi_dim = 32
 normalize_target = false
 
-[scalarfield_exp4_norm]
+[scalarfield_plane_norm]
 pT = "rm_outliers_20_2_visib_10_v2"
 dgedi_dim = 32

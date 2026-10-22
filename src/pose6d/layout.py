@@ -20,7 +20,10 @@ This is the Layout expected and used by every other object:
 - PTCofing and SymmConfig parses tomls configurations. Their use is restricted to dataset creation and verisioning
 """
 
-DATASETS = ("lmo", "pbr", "ycbv")
+# Dataset names are the uid prefix: "{dataset}" for real data and "{dataset}-pbr" for the
+# synthetic BOP renders (no "_", uids are split on it). "pbr" is the legacy name of lm-pbr,
+# kept so existing files, splits and mlflow runs still match.
+DATASETS = ("lmo", "pbr", "ycbv", "tless", "tless-pbr")
 DGEDI_DIMS = (32, 64)
 
 CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from .config import LMOConfig, PBRConfig, YCBVConfig
+from .config import LMOConfig, PBRConfig, TLESSConfig, YCBVConfig
 
 import numpy as np
 import torch
@@ -343,6 +343,26 @@ class YCBVLoader(BOPLoader):
         return cls(YCBVConfig.from_root(root))
 
 
+class TLESSLoader(BOPLoader):
+    """BOPLoader over T-LESS test scenes (primesense); models live in root/models_cad."""
+
+    dataset_name = "tless"
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "TLESSLoader":
+        return cls(TLESSConfig.from_root(root))
+
+
+class TLESSPBRLoader(BOPLoader):
+    """BOPLoader over T-LESS synthetic scenes (root/train_pbr), same models as tless."""
+
+    dataset_name = "tless-pbr"
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "TLESSPBRLoader":
+        return cls(TLESSConfig.from_root(root, "train_pbr"))
+
+
 # Scene jsons are re-read for every instance otherwise (slow on pbr scenes).
 # Returned dicts are shared between callers: treat them as read-only.
 @lru_cache(maxsize=32)
@@ -366,11 +386,15 @@ def build_loader(
         return PBRLoader.from_roots(dataset_root, model_root)
     if dataset_type == "ycbv":
         return YCBVLoader.from_root(dataset_root)
+    if dataset_type == "tless":
+        return TLESSLoader.from_root(dataset_root)
+    if dataset_type == "tless-pbr":
+        return TLESSPBRLoader.from_root(dataset_root)
     raise ValueError(f"Unknown dataset type: {dataset_type}")
 
 
-# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT, YCBV_ROOT).
-# pbr uses the lmo object models.
+# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT, YCBV_ROOT, TLESS_ROOT).
+# pbr uses the lmo object models; tless and tless-pbr share TLESS_ROOT.
 def loader_from_env(dataset_type: str) -> BOPLoader:
     def env(var: str) -> str:
         value = os.environ.get(var)
@@ -382,4 +406,6 @@ def loader_from_env(dataset_type: str) -> BOPLoader:
         return build_loader("pbr", env("PBR_ROOT"), env("LMO_ROOT"))
     if dataset_type == "ycbv":
         return build_loader("ycbv", env("YCBV_ROOT"))
+    if dataset_type in ("tless", "tless-pbr"):
+        return build_loader(dataset_type, env("TLESS_ROOT"))
     return build_loader(dataset_type, env("LMO_ROOT"))

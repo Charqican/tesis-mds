@@ -22,9 +22,9 @@ scenes = [2]
 # scenes = "48-59"
 
 # Same parameters as the legacy version, extracted with the current extractor (min points
-# checked after outlier removal, no padded clouds). Used from scalarfield_exp4 on.
+# checked after outlier removal, no padded clouds). Used by scalarfield_plane* and later versions.
 # Each machine extracts only what it has, e.g. --scenes lmo:2 pbr:0-49 on the server
-# and --scenes tless:1-20 tless-pbr:0 locally.
+# and --scenes tless:1-20 tless-pbr:0-1 locally.
 [rm_outliers_20_2_visib_10_v2]
 min_visib = 0.10
 n_points = 1024
@@ -43,7 +43,8 @@ scenes = "0-49"
 dataset = "tless"
 scenes = "1-20"
 
-# 50 scenes x 1000 images in train_pbr: start with one and add more as dgedi time allows
+# 50 scenes x 1000 images in train_pbr (~9600 C2 instances each, ~10 min of extraction):
+# start with two and add more as dgedi time allows
 [[rm_outliers_20_2_visib_10_v2.sources]]
 dataset = "tless-pbr"
-scenes = [0]
+scenes = "0-1"
