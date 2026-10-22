@@ -29,3 +29,13 @@ dgedi_dim = 32
 [scalarfield_inference_norm]
 pT = "rm_outliers_20_2_visib_10"
 dgedi_dim = 32
+
+# Same targets as exp3, on the v2 pT (current extractor, no padded clouds)
+[scalarfield_exp4]
+pT = "rm_outliers_20_2_visib_10_v2"
+dgedi_dim = 32
+normalize_target = false
+
+[scalarfield_exp4_norm]
+pT = "rm_outliers_20_2_visib_10_v2"
+dgedi_dim = 32
