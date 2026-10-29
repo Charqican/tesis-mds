@@ -7,6 +7,7 @@ dist/
 doc/Apuntes/
 data
 data/*
+doc/*
 wheels/
 notebooks/layouts/
 notebooks/html/
@@ -26,8 +27,8 @@ external/dgedi/.cache/
 
 
 # Artifacts
-mlartifacts/
-mlruns/
+mlartifacts/*
+mlruns/*
 lmo_lmo_results.xlsx
 mlflow.db
 
