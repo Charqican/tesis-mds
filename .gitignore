@@ -8,7 +8,11 @@ doc/Apuntes/
 data
 data/*
 wheels/
+notebooks/layouts/
+notebooks/html/
+
 *.egg-info
+
 
 # Virtual environments
 .venv
@@ -20,6 +24,11 @@ external/dgedi_env/
 external/dgedi/checkpoints/
 external/dgedi/.cache/
 
+
 # Artifacts
 mlartifacts/
+mlruns/
+lmo_lmo_results.xlsx
 mlflow.db
+
+
