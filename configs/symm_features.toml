@@ -5,9 +5,13 @@
 #   dgedi_dim          32 or 64, forwarded to the dgedi command
 #   canonical_samples  points sampled on the mesh for the canonical field (default 20000)
 #   seed               seed of that sampling (default 0)
-#   normalize_target   divide the target by the pT diameter, like dGeDi does with its input (default true)
+#   normalize_target   divide the target by a diameter (default true)
+#   normalize_by       "pT": diameter of the partial cloud, like dGeDi does with its input (default)
+#                      "model": diameter of the object mesh (models_info.json), same for every view
+#   dgedi_normalize_by diameter that divides the dgedi input, same options (default "pT").
+#                      The dgedi demo divides the target cloud by the query (CAD) diameter, "model".
 #
-# dgedi inputs only depend on pT and dgedi_dim: a _norm version can reuse them with
+# dgedi inputs only depend on pT, dgedi_dim and dgedi_normalize_by: a _norm version can reuse them with
 #   cp -al {root}/versions/{version}/input {root}/versions/{version}_norm/input
 
 [scalarfield_exp3]
@@ -40,3 +44,70 @@ normalize_target = false
 [scalarfield_plane_norm]
 pT = "rm_outliers_20_2_visib_10_v2"
 dgedi_dim = 32
+
+# Target normalized by the object (mesh) diameter instead of the pT one: the scale no longer
+# depends on the view or on the outliers left in the pT. Same pT as exp3, so the lmo-strat
+# split and the dgedi inputs are reused:
+#   cp -al {root}/versions/scalarfield_exp3/input {root}/versions/scalarfield_exp3_normdiam/input
+#   python scripts/pose6d_prepare_data.py --version-name scalarfield_exp3_normdiam --scenes lmo:2
+[scalarfield_exp3_normdiam]
+pT = "rm_outliers_20_2_visib_10"
+dgedi_dim = 32
+normalize_by = "model"
+
+# Inference on ycbv for the _normdiam models: target divided by the diameter of the ycbv object
+#   cp -al {root}/versions/scalarfield_inference/input {root}/versions/scalarfield_inference_normdiam/input
+#   python scripts/pose6d_prepare_data.py --version-name scalarfield_inference_normdiam --scenes ycbv:48-59
+[scalarfield_inference_normdiam]
+pT = "rm_outliers_20_2_visib_10"
+dgedi_dim = 32
+normalize_by = "model"
+
+# Other datasets, enable when needed (tless: v2 pT)
+# [scalarfield_plane_normdiam]
+# pT = "rm_outliers_20_2_visib_10_v2"
+# dgedi_dim = 32
+# normalize_by = "model"
+
+# Same target as scalarfield_exp3 (raw distance to the plane) on the largest cluster pT,
+# compared with exp3 on the same lmo-strat uids (split copied from scalarfield_exp3)
+[scalarfield_plane_cluster]
+pT = "largest_cluster_5_visib_10"
+dgedi_dim = 32
+normalize_target = false
+
+# CAD sphere pT (pT_extract.toml), target by the model diameter like exp3_normdiam.
+# Three-way comparison on the lmo-strat uids:
+#   scalarfield_exp3_normdiam       statistical removal, dgedi by the pT diameter (current)
+#   scalarfield_sphere_normdiam     CAD sphere, dgedi by the pT diameter
+#   scalarfield_sphere_dgedimodel   CAD sphere, dgedi by the model diameter (like the dgedi demo)
+#   python scripts/pose6d_prepare_data.py --version-name scalarfield_sphere_normdiam
+[scalarfield_sphere_normdiam]
+pT = "sphere_12_visib_10"
+dgedi_dim = 32
+normalize_by = "model"
+
+[scalarfield_sphere_dgedimodel]
+pT = "sphere_12_visib_10"
+dgedi_dim = 32
+normalize_by = "model"
+dgedi_normalize_by = "model"
+
+# Per-object models (notebooks/per_object_models.py): CAD sphere pT, target and dgedi by the
+# model diameter, and the mirror plane with the most available symmetry for each object
+# (candidate index of geometry_utils.candidate_plane_normals). Only lmo, ycbv, ycbv-pbr and pbr have this pT.
+[scalarfield_radiusremoval_cadnormalization_bestsymmplanes]
+pT = "sphere_12_visib_10"
+dgedi_dim = 32
+normalize_by = "model"
+dgedi_normalize_by = "model"
+symmetry_planes = { lmo = { 10 = 1, 11 = 2 }, ycbv = { 1 = 0, 16 = 0 }, "ycbv-pbr" = { 1 = 0, 16 = 0 }, pbr = { 10 = 1, 11 = 2 } }
+
+# Same as above, wood block with the diagonal plane (candidate 2) instead of z. Shares the
+# dgedi inputs (hard links), only the wood block targets are computed.
+[scalarfield_radiusremoval_cadnormalization_bestsymmplanes_wooddiag]
+pT = "sphere_12_visib_10"
+dgedi_dim = 32
+normalize_by = "model"
+dgedi_normalize_by = "model"
+symmetry_planes = { lmo = { 10 = 1, 11 = 2 }, ycbv = { 1 = 0, 16 = 2 }, "ycbv-pbr" = { 1 = 0, 16 = 2 }, pbr = { 10 = 1, 11 = 2 } }
