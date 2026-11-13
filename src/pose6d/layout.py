@@ -1,6 +1,6 @@
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 """
@@ -23,7 +23,7 @@ This is the Layout expected and used by every other object:
 # Dataset names are the uid prefix: "{dataset}" for real data and "{dataset}-pbr" for the
 # synthetic BOP renders (no "_", uids are split on it). "pbr" is the legacy name of lm-pbr,
 # kept so existing files, splits and mlflow runs still match.
-DATASETS = ("lmo", "pbr", "ycbv", "tless", "tless-pbr")
+DATASETS = ("lmo", "pbr", "ycbv", "ycbv-pbr", "tless", "tless-pbr")
 DGEDI_DIMS = (32, 64)
 
 CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"
@@ -71,6 +71,10 @@ class DataLayout:
     def target_dir(self, version: str) -> Path:
         return self.version_dir(version) / "target"
 
+    # per uid symmetry available in the pT (preprocessing.available_symmetry), metadata of the target
+    def symm_meta(self, version: str) -> Path:
+        return self.target_dir(version) / "available_symm.parquet"
+
     def version_manifest(self, version: str) -> Path:
         return self.version_dir(version) / "manifest.json"
 
@@ -102,6 +106,10 @@ class PTConfig:
     n_points: int
     outliers: dict | None
     scenes: dict[str, tuple[int, ...]]  # dataset -> scene ids
+    cluster: dict | None = None  # {"eps": mm, "min_points": int}
+    sphere: dict | None = None  # {"k": float}, times the CAD radius
+    # dataset -> obj ids to extract (subset of the symmetric ones), datasets not listed extract all
+    objects: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
     # saved in the manifests as metadata
     def params(self) -> dict:
@@ -109,6 +117,9 @@ class PTConfig:
             "min_visib": self.min_visib,
             "n_points": self.n_points,
             "outliers": dict(self.outliers) if self.outliers else None,
+            "cluster": dict(self.cluster) if self.cluster else None,
+            "sphere": dict(self.sphere) if self.sphere else None,
+            "objects": {d: list(o) for d, o in self.objects.items()},
         }
 
 
@@ -120,13 +131,23 @@ class SymmConfig:
     canonical_samples: int = 20000
     seed: int = 0
     normalize_target: bool = True
+    normalize_by: str = "pT"  # "pT" or "model" diameter, see preprocessing.target_scale
+    dgedi_normalize_by: str = "pT"  # diameter that divides the dgedi input, "pT" or "model"
+    # dataset -> obj_id -> candidate plane (geometry_utils.candidate_plane_normals),
+    # objects not listed keep the legacy plane of BOPLoader.load_symmetry_plane
+    symmetry_planes: dict[str, dict[int, int]] = field(default_factory=dict)
 
     def target_params(self) -> dict:
         return {
             "canonical_samples": self.canonical_samples,
             "seed": self.seed,
             "normalize_target": self.normalize_target,
+            "normalize_by": self.normalize_by,
+            "symmetry_planes": self.symmetry_planes,
         }
+
+    def input_params(self) -> dict:
+        return {"dgedi_dim": self.dgedi_dim, "dgedi_normalize_by": self.dgedi_normalize_by}
 
 
 def load_pT_configs(path: Path = PT_TOML) -> dict[str, PTConfig]:
@@ -135,7 +156,7 @@ def load_pT_configs(path: Path = PT_TOML) -> dict[str, PTConfig]:
 
     configs = {}
     for name, section in raw.items():
-        scenes = {}
+        scenes, objects = {}, {}
         for source in section.get("sources", []):
             dataset = source["dataset"]
             if dataset not in DATASETS:
@@ -143,6 +164,8 @@ def load_pT_configs(path: Path = PT_TOML) -> dict[str, PTConfig]:
             if dataset in scenes:
                 raise ValueError(f"[{name}] dataset {dataset!r} declared twice")
             scenes[dataset] = parse_scenes(source["scenes"])
+            if "objects" in source:
+                objects[dataset] = tuple(int(o) for o in source["objects"])
         if not scenes:
             raise ValueError(f"[{name}] needs at least one [[{name}.sources]] entry")
 
@@ -152,12 +175,24 @@ def load_pT_configs(path: Path = PT_TOML) -> dict[str, PTConfig]:
                 "nb_neighbors": int(outliers["nb_neighbors"]),
                 "std": float(outliers["std"]),
             }
+        cluster = section.get("cluster")
+        if cluster is not None:
+            cluster = {
+                "eps": float(cluster["eps"]),
+                "min_points": int(cluster["min_points"]),
+            }
+        sphere = section.get("sphere")
+        if sphere is not None:
+            sphere = {"k": float(sphere["k"])}
         configs[name] = PTConfig(
             name=name,
             min_visib=float(section["min_visib"]),
             n_points=int(section["n_points"]),
             outliers=outliers,
             scenes=scenes,
+            cluster=cluster,
+            sphere=sphere,
+            objects=objects,
         )
     return configs
 
@@ -170,9 +205,18 @@ def load_symm_configs(
 
     configs = {}
     for name, section in raw.items():
-        cfg = SymmConfig(name=name, **section)
+        # toml keys are strings: { ycbv = { 16 = 2 } } -> {"ycbv": {16: 2}}
+        planes = {
+            dataset: {int(obj_id): int(index) for obj_id, index in objects.items()}
+            for dataset, objects in section.pop("symmetry_planes", {}).items()
+        }
+        cfg = SymmConfig(name=name, symmetry_planes=planes, **section)
         if cfg.dgedi_dim not in DGEDI_DIMS:
             raise ValueError(f"[{name}] dgedi_dim must be one of {DGEDI_DIMS}")
+        if cfg.normalize_by not in ("pT", "model"):
+            raise ValueError(f"[{name}] normalize_by must be 'pT' or 'model'")
+        if cfg.dgedi_normalize_by not in ("pT", "model"):
+            raise ValueError(f"[{name}] dgedi_normalize_by must be 'pT' or 'model'")
         if pT_configs is not None and cfg.pT not in pT_configs:
             raise ValueError(
                 f"[{name}] pT {cfg.pT!r} is not defined in pT_extract.toml"
