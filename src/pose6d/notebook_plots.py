@@ -32,6 +32,41 @@ def _mesh_trace(vertices: np.ndarray, faces: np.ndarray, **kwargs) -> go.Mesh3d:
     )
 
 
+def plot_model_mesh(loader: BOPLoader, obj_id: int) -> go.Figure:
+    """Mesh of an object in its model frame (mm) with the x/y/z axes, to inspect its symmetries."""
+    mesh = trimesh.load(loader.cfg.paths.model_path(obj_id))
+    vertices, faces = np.asarray(mesh.vertices), np.asarray(mesh.faces)
+    traces = [
+        go.Mesh3d(
+            x=vertices[:, 0],
+            y=vertices[:, 1],
+            z=vertices[:, 2],
+            i=faces[:, 0],
+            j=faces[:, 1],
+            k=faces[:, 2],
+            color="lightgray",
+            flatshading=True,
+            name=f"obj {obj_id}",
+        )
+    ]
+    length = 0.6 * np.abs(vertices).max()
+    for axis, (name, color) in zip(np.eye(3), (("x", "red"), ("y", "green"), ("z", "blue"))):
+        line = np.stack([-axis, axis]) * length
+        traces.append(
+            go.Scatter3d(
+                x=line[:, 0],
+                y=line[:, 1],
+                z=line[:, 2],
+                mode="lines",
+                line=dict(color=color, width=6),
+                name=name,
+            )
+        )
+    fig = go.Figure(data=traces)
+    fig.update_layout(title=f"obj {obj_id}", height=600, scene=dict(aspectmode="data"))
+    return fig
+
+
 def plot_frame_meshes_and_sensor(
     loader: BOPLoader, scene_id: int, img_id: int
 ) -> go.Figure:
@@ -252,8 +287,45 @@ def plot_mesh_instance_with_dgedi_features(
     return fig
 
 
+def plot_outlier_removal(
+    loader: BOPLoader,
+    scene_id: int,
+    img_id: int,
+    inst_idx: int,
+    points: np.ndarray,
+    removed: np.ndarray,
+    far: np.ndarray,
+    title: str = "",
+) -> go.Figure:
+    """
+    Raw points of an instance over its posed mesh: kept (blue), removed by the method
+    (red) and kept although far from the surface, i.e. outliers the method missed (orange).
+    """
+    _, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
+    groups = (
+        ("kept", ~removed & ~far, "steelblue", 2),
+        ("removed", removed, "red", 3),
+        ("missed (kept, > 10 mm from the surface)", ~removed & far, "orange", 4),
+    )
+    traces = [_mesh_trace(vertices, faces, opacity=0.12, color="white", name="model")]
+    for name, mask, color, size in groups:
+        traces.append(
+            go.Scatter3d(
+                x=points[mask, 0],
+                y=points[mask, 1],
+                z=-points[mask, 2],
+                mode="markers",
+                marker=dict(size=size, color=color),
+                name=f"{name} ({mask.sum()})",
+            )
+        )
+    fig = go.Figure(data=traces)
+    fig.update_layout(title=title, height=550, scene=dict(aspectmode="data"))
+    return fig
+
+
 def plot_pcd_outlier_mask(
-    pcd: np.ndarray, outlier_mask: np.ndarray, uid: str
+    pcd: np.ndarray, outlier_mask: np.ndarray, uid: str, title: str | None = None
 ) -> go.Figure:
     fig = go.Figure(
         data=[
@@ -271,12 +343,12 @@ def plot_pcd_outlier_mask(
                 z=-pcd[outlier_mask, 2],
                 mode="markers",
                 marker=dict(size=4, color="red"),
-                name="Detected Outliers",
+                name="outliers",
             ),
         ]
     )
     fig.update_layout(
-        title=f"{uid} — statistical outlier removal",
+        title=title or f"{uid} — statistical outlier removal",
         height=700,
         scene=dict(aspectmode="data"),
     )
@@ -313,7 +385,7 @@ def plot_gt_vs_pred_comparison(
 
     def _mesh():
         return _mesh_trace(
-            vertices, faces, opacity=0.3, color="orange", showlegend=False
+            vertices, faces, opacity=0.12, color="white", showlegend=False
         )
 
     fig = make_subplots(
@@ -400,7 +472,7 @@ def plot_gt_vs_pred_comparison_robust(
 
     def _mesh():
         return _mesh_trace(
-            vertices, faces, opacity=0.3, color="orange", showlegend=False
+            vertices, faces, opacity=0.12, color="white", showlegend=False
         )
 
     fig = make_subplots(
@@ -456,4 +528,33 @@ def plot_gt_vs_pred_comparison_robust(
         scene=dict(aspectmode="data"),
         scene2=dict(aspectmode="data"),
     )
+    return fig
+
+
+def plot_recall_points(
+    loader: BOPLoader,
+    scene_id: int,
+    img_id: int,
+    inst_idx: int,
+    points: np.ndarray,
+    hit: np.ndarray,
+    title: str = "",
+) -> go.Figure:
+    """Points of one instance over its posed mesh: soft blue where |pred - target| is within the
+    recall threshold (hit), red where it is not."""
+    _, vertices, faces = _posed_mesh(loader, scene_id, img_id, inst_idx)
+    traces = [_mesh_trace(vertices, faces, opacity=0.3, color="white", showlegend=False)]
+    for mask, name, color in [(hit, "within", "#9ecae1"), (~hit, "outside", "#d62728")]:
+        traces.append(
+            go.Scatter3d(
+                x=points[mask, 0],
+                y=points[mask, 1],
+                z=-points[mask, 2],
+                mode="markers",
+                marker=dict(size=3, color=color),
+                name=f"{name} ({mask.mean():.0%})",
+            )
+        )
+    fig = go.Figure(data=traces)
+    fig.update_layout(title=title, scene=dict(aspectmode="data"), height=600)
     return fig
