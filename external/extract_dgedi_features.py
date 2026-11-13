@@ -55,7 +55,8 @@ def parse_args() -> argparse.Namespace:
         "--inputs-list",
         type=Path,
         required=True,
-        help="Text file with one pT .npz path per line.",
+        help="Text file with one pT .npz path per line, optionally followed by a tab and "
+        "the diameter that normalizes it (default: diameter of the pT itself).",
     )
     p.add_argument(
         "--output-dir",
@@ -76,14 +77,18 @@ def load_model(mode: str):
 
 
 @torch.no_grad()
-def process_one(npz_path: Path, model, features_dir: Path, dim: int) -> None:
+def process_one(
+    npz_path: Path, model, features_dir: Path, dim: int, diameter: float | None
+) -> None:
     data = np.load(npz_path)
     points = data["points"]
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
 
-    diameter = compute_diameter(pcd)
+    # the demo divides the target by the query (CAD) diameter, we fall back to the pT one
+    if diameter is None:
+        diameter = compute_diameter(pcd)
     normalize_and_center(pcd, diameter)
     features = extract_features(pcd, model, DEVICE)
     if features.shape[-1] != dim:
@@ -100,11 +105,12 @@ def process_one(npz_path: Path, model, features_dir: Path, dim: int) -> None:
 
 def main():
     args = parse_args()
-    all_inputs = [
-        Path(line.strip())
-        for line in args.inputs_list.read_text().splitlines()
-        if line.strip()
-    ]
+    # path -> diameter (None: diameter of the pT)
+    all_inputs = {}
+    for line in args.inputs_list.read_text().splitlines():
+        if line.strip():
+            path, _, diameter = line.strip().partition("\t")
+            all_inputs[Path(path)] = float(diameter) if diameter else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
     pending = [p for p in all_inputs if not (args.output_dir / p.name).exists()]
     print(f"{len(all_inputs)} total, {len(pending)} pending")
@@ -125,7 +131,9 @@ def main():
         iterator = tqdm(batch, unit="instance") if TQDM_AVAILABLE else batch
         for npz_path in iterator:
             try:
-                process_one(npz_path, model, args.output_dir, args.dim)
+                process_one(
+                    npz_path, model, args.output_dir, args.dim, all_inputs[npz_path]
+                )
                 n_ok += 1
             except DimMismatchError:
                 raise
