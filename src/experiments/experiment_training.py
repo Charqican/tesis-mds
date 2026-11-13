@@ -2,7 +2,6 @@ import copy
 from dataclasses import dataclass
 
 import torch
-from torch.utils.data import DataLoader
 
 from pose6d.dataset import SplitData
 from logger import TimedLogger, training_logger as log
@@ -32,6 +31,15 @@ def predict(model: torch.nn.Module, split: SplitData, device, chunk: int = 256):
     return torch.cat(preds)
 
 
+def fits_on_device(tensors: list[torch.Tensor], device, frac: float = 0.5) -> bool:
+    """Whether the tensors take less than `frac` of the free gpu memory (the rest is left
+    for activations and the optimizer)."""
+    if device.type != "cuda":
+        return True
+    free, _ = torch.cuda.mem_get_info(device)
+    return sum(t.nbytes for t in tensors) < frac * free
+
+
 def train(
     model: torch.nn.Module,
     train_split: SplitData,
@@ -55,7 +63,15 @@ def train(
     """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    loader = DataLoader(train_split, batch_size=batch_size, shuffle=True)
+    # train+val on the gpu once if they fit (local lmo/ycbv), else they stay in ram and each
+    # batch is copied (big pbr splits on the cluster)
+    data = [train_split.inputs, train_split.targets, val_split.inputs]
+    data_device = device if fits_on_device(data, device) else torch.device("cpu")
+    log.info(f"Training data on {data_device}")
+    train_inputs = train_split.inputs.to(data_device)
+    train_targets = train_split.targets.to(data_device)
+    val_split = SplitData(val_split.uids, val_split.inputs.to(data_device), val_split.targets)
+    n_batches = -(-len(train_split) // batch_size)
     optimizer = optimizer_cls(model.parameters(), **(optimizer_kwargs or {}))
     scheduler = (
         scheduler_cls(optimizer, **(scheduler_kwargs or {})) if scheduler_cls else None
@@ -66,15 +82,16 @@ def train(
     val_loss = float("nan")
     for epoch in range(max_epochs):
         model.train()
-        epoch_loss = 0.0
-        for inputs, targets in loader:
-            inputs, targets = inputs.to(device), targets.to(device)
+        # accumulated on the gpu: .item() per step would sync cpu and gpu every batch
+        epoch_loss = torch.zeros((), device=device)
+        for idx in torch.randperm(len(train_split), device=data_device).split(batch_size):
+            inputs, targets = train_inputs[idx].to(device), train_targets[idx].to(device)
             optimizer.zero_grad()
             loss = instance_losses(model(inputs), targets).mean()
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item()
-        train_loss = epoch_loss / len(loader)
+            epoch_loss += loss.detach()
+        train_loss = epoch_loss.item() / n_batches
         if scheduler:
             scheduler.step()
 

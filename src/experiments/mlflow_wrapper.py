@@ -6,10 +6,11 @@ import mlflow
 import pandas as pd
 import torch
 
-from experiments.analysis import uid_info
+from experiments.analysis import RECALL_PCTS, field_ranges_mm, load_run, uid_info
 from experiments.experiment_setup import setup
 from experiments.experiment_training import instance_losses, predict, train
-from pose6d.dataset import SPLIT_NAMES, SymmetryFieldDataset
+from pose6d.dataset import SPLIT_NAMES, Splits, SymmetryFieldDataset
+from pose6d.geometry_utils import regression_recall
 from pose6d.layout import DataLayout
 from logger import experiments_logger as log
 
@@ -18,7 +19,8 @@ One mlflow run per config. Logged:
     params      the flattened config (classes by name)
     tags        obj_ids, split, model, optimizer (to group runs)
     metrics     train/val loss curves; final_{train,val,test}_loss, test_rmse_{mean,median},
-                test_rmse_mm_{mean,median} and test_pearson_mean of the best model; best_epoch, n_epochs, n_{train,val,test}, train_time_s
+                test_rmse_mm_{mean,median}, test_pearson_mean and test_recall_{5,10}_mean of the best model;
+                best_epoch, n_epochs, n_{train,val,test}, train_time_s
     artifacts   splits.json, normalizer.json, instances.parquet (per uid metrics),
                 model.pt (state_dict) + model.json (class, kwargs, in_dim)
 """
@@ -49,12 +51,12 @@ def run_experiment(config: dict, layout: DataLayout) -> None:
             model,
             ds.train,
             ds.val,
-            on_eval=lambda m, step: mlflow.log_metrics(m, step=step),
+            on_eval=lambda m, step: mlflow.log_metrics(m, step=step, synchronous=False),
             **train_conf,
         )
         train_time = time.monotonic() - start
 
-        instances = instance_metrics(result.model, ds)
+        instances = instance_metrics(result.model, ds, data["version"])
         test = instances[instances["split"] == "test"]
         mlflow.log_metrics(
             {
@@ -69,6 +71,7 @@ def run_experiment(config: dict, layout: DataLayout) -> None:
                 "test_rmse_mm_mean": test["rmse_mm"].mean(),
                 "test_rmse_mm_median": test["rmse_mm"].median(),
                 "test_pearson_mean": test["pearson"].mean(),
+                **test_recall_metrics(test),
                 "best_epoch": result.best_epoch,
                 "n_epochs": result.n_epochs,
                 "train_time_s": train_time,
@@ -96,10 +99,13 @@ def run_experiment(config: dict, layout: DataLayout) -> None:
         )
 
 
-def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.DataFrame:
+def instance_metrics(
+    model: torch.nn.Module, ds: SymmetryFieldDataset, version: str
+) -> pd.DataFrame:
     """
-    One row per uid of every split. loss is normalized, rmse_mm in mm, pearson has no
-    units, the rest in target units (mm or pT diameters if the target is normalized).
+    One row per uid of every split. loss is normalized, rmse_mm in mm, pearson and
+    recall_{5,10} (fraction of points within 5/10 % of the field range) have no units,
+    the rest in target units (mm or pT diameters if the target is normalized).
     """
     device = next(model.parameters()).device
     frames = []
@@ -112,6 +118,9 @@ def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.Dat
         target = ds.normalizer.denormalize_targets(split.targets)
         error = pred - target
         rmse = error.pow(2).mean(dim=1).sqrt().numpy()
+        scales = ds.scales(split.uids)
+        pred_mm, target_mm = pred.numpy() * scales[:, None], target.numpy() * scales[:, None]
+        field_range = field_ranges_mm(version, split.uids)
         frames.append(
             pd.DataFrame(
                 {
@@ -119,8 +128,12 @@ def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.Dat
                     "split": split_name,
                     "loss": instance_losses(pred_norm, split.targets).numpy(),
                     "rmse": rmse,
-                    "rmse_mm": rmse * ds.scales(split.uids),
+                    "rmse_mm": rmse * scales,
                     "pearson": pearson(pred, target).numpy(),
+                    **{
+                        f"recall_{round(pct * 100)}": regression_recall(pred_mm, target_mm, field_range, pct)
+                        for pct in RECALL_PCTS
+                    },
                     "mae": error.abs().mean(dim=1).numpy(),
                     "bias": error.mean(dim=1).numpy(),
                     "target_mean": target.mean(dim=1).numpy(),
@@ -130,6 +143,27 @@ def instance_metrics(model: torch.nn.Module, ds: SymmetryFieldDataset) -> pd.Dat
         )
     metrics = pd.concat(frames, ignore_index=True)
     return uid_info(metrics["uid"].tolist()).merge(metrics, on="uid")
+
+
+def test_recall_metrics(test: pd.DataFrame) -> dict:
+    return {
+        f"test_recall_{round(pct * 100)}_mean": test[f"recall_{round(pct * 100)}"].mean()
+        for pct in RECALL_PCTS
+    }
+
+
+def log_test_recall(run_id: str, layout: DataLayout) -> dict:
+    """Computes the test recall of a finished run with its saved model and logs it to that
+    run (for runs from before recall was logged by run_experiment)."""
+    run = load_run(run_id)
+    version = run.params["data.version"]
+    ds = SymmetryFieldDataset(layout, version, normalizer=run.normalizer)
+    ds.assign_splits(Splits(test=run.splits.test))
+    metrics = test_recall_metrics(instance_metrics(run.model, ds, version))
+    client = mlflow.MlflowClient()
+    for name, value in metrics.items():
+        client.log_metric(run_id, name, value)
+    return metrics
 
 
 # per row (instance) pearson correlation between pred and target

@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import mlflow
@@ -8,6 +9,7 @@ import pandas as pd
 import torch
 
 import pose6d.model
+from pose6d.features import compute_canonical_symmetry_field
 from pose6d.dataset import Normalizer, Splits
 from pose6d.layout import DataLayout, load_symm_configs
 from pose6d.loader import BOPLoader, loader_from_env
@@ -37,8 +39,11 @@ RUN_COLUMNS = {
     "metrics.test_rmse_median": "test_rmse_median",
     "metrics.test_rmse_mm_mean": "test_rmse_mm_mean",
     "metrics.test_pearson_mean": "test_pearson_mean",
+    "metrics.test_recall_5_mean": "test_recall_5_mean",
+    "metrics.test_recall_10_mean": "test_recall_10_mean",
     "metrics.best_epoch": "best_epoch",
     "run_id": "run_id",
+    "start_time": "start_time",
 }
 
 
@@ -51,6 +56,43 @@ class RunArtifacts:
     splits: Splits
     normalizer: Normalizer
     instances: pd.DataFrame
+
+
+# --- recall: fraction of points with |pred - target| < pct * field_range (geometry_utils.regression_recall)
+RECALL_PCTS = (0.05, 0.10)
+
+
+@lru_cache
+def field_range_mm(version: str, dataset: str, obj_id: int) -> float:
+    """Max of the canonical symmetry field (mm) of an object, on the plane of the version."""
+    cfg = load_symm_configs()[version]
+    plane_index = cfg.symmetry_planes.get(dataset, {}).get(obj_id)
+    torch.manual_seed(cfg.seed)
+    _, field = compute_canonical_symmetry_field(
+        loader_from_env(dataset), obj_id, cfg.canonical_samples, plane_index
+    )
+    return float(field.max())
+
+
+def field_ranges_mm(version: str, uids: list[str]) -> np.ndarray:
+    ranges = []
+    for uid in uids:
+        dataset, _, _, obj_id, _ = BOPLoader.parse_instance_uid(uid)
+        ranges.append(field_range_mm(version, dataset, obj_id))
+    return np.array(ranges)
+
+
+# --- labels for plots and tables
+EXPERIMENT_PREFIXES = {"lmo-strat": "lmo-real", "pbr-train_lmo-test": "lmo-pbr"}
+
+
+def experiment_label(experiment: str) -> str:
+    """Readable experiment name: lmo-strat_obj10-11_norm -> 'lmo-real obj10,11 norm'."""
+    prefix, _, objs = experiment.partition("_obj")
+    label = EXPERIMENT_PREFIXES.get(prefix, prefix)
+    if objs:
+        label += f" obj{objs.removesuffix('_norm').replace('-', ',')}"
+    return label + (" norm" if experiment.endswith("_norm") else "")
 
 
 # --- many runs
@@ -123,10 +165,12 @@ def load_run(run_id: str) -> RunArtifacts:
 
 
 def predict_instance(
-    run: RunArtifacts, layout: DataLayout, uid: str
+    run: RunArtifacts, layout: DataLayout, uid: str, version: str | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """(points, target, pred) of one local uid, target and pred in target units."""
-    points, features, target = load_instance(layout, run.params["data.version"], uid)
+    """(points, target, pred) of one local uid, target and pred in target units.
+    version defaults to the run's one (e.g. an inference version for unseen objects)."""
+    version = version or run.params["data.version"]
+    points, features, target = load_instance(layout, version, uid)
     with torch.no_grad():
         inputs = run.normalizer.inputs(torch.from_numpy(features).float())
         pred = run.normalizer.denormalize_targets(run.model(inputs))
