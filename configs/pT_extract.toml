@@ -48,3 +48,49 @@ scenes = "1-20"
 [[rm_outliers_20_2_visib_10_v2.sources]]
 dataset = "tless-pbr"
 scenes = "0-1"
+
+# Largest DBSCAN cluster instead of the statistical removal (notebooks/pose6d_outlier_removal.py):
+# removes the groups of points separated from the object that the statistical one keeps.
+# Removal before FPS, so every pT keeps n_points. Only lmo for the available_symm proof of concept.
+[largest_cluster_5_visib_10]
+min_visib = 0.10
+n_points = 1024
+cluster = { eps = 5.0, min_points = 10 }
+
+[[largest_cluster_5_visib_10.sources]]
+dataset = "lmo"
+scenes = [2]
+
+# CAD sphere instead of the statistical removal: keeps ||p - t|| <= k * r, with t the GT
+# translation and r = max ||v|| of the CAD vertices (SAM-6D training uses k = 1.2 with the
+# radius of its templates). Only lmo, compared with exp3_normdiam on the lmo-strat uids.
+[sphere_12_visib_10]
+min_visib = 0.10
+n_points = 1024
+sphere = { k = 1.2 }
+
+[[sphere_12_visib_10.sources]]
+dataset = "lmo"
+scenes = [2]
+
+# YCB-V real test (full, not the BOP19 subset): master chef can in 48 and 51 (the most
+# occluded of its scenes), wood block only appears in 55
+[[sphere_12_visib_10.sources]]
+dataset = "ycbv"
+scenes = [48, 51, 55]
+
+# YCB-V train_pbr (50 scenes x 1000 images, in the SSD: YCBV_PBR_ROOT) for the pbr -> real
+# experiments. Every scene is extracted (pT is light); dgedi only for the sampled images.
+# Only master chef can (1) and wood block (16), the ycbv objects of the per-object models.
+[[sphere_12_visib_10.sources]]
+dataset = "ycbv-pbr"
+scenes = "0-49"
+objects = [1, 16]
+
+# lm train_pbr (PBR_ROOT, HDD) for the pbr -> real experiments: eggbox (10) and glue (11).
+# Only the sampled uids are extracted (per_object_models.py section 8.1):
+#   python scripts/pose6d_prepare_data.py --config-name sphere_12_visib_10 --uids-file ~/dev/dataset/pbr_sample.txt
+[[sphere_12_visib_10.sources]]
+dataset = "pbr"
+scenes = "0-49"
+objects = [10, 11]

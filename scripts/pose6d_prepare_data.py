@@ -22,6 +22,7 @@ from pose6d.preprocessing import (
     compute_targets,
     extract_scene,
     extract_uids,
+    model_diameter,
 )
 from logger import scripts_extraction_logger as log
 
@@ -42,6 +43,9 @@ so this script writes the work list and prints the exact command to run.
     # specific cases with the parameters of a version. This is used mainfly for analysis
     python scripts/pose6d_prepare_data.py --version-name scalarfield_exp3 --scenes pbr:3,5-7 lmo:2
     python scripts/pose6d_prepare_data.py --version-name scalarfield_exp3 --uids pbr_scene000003_img000012_obj000010_inst01
+
+    # uids from a file, one per line (e.g. the ycbv-pbr sample of per_object_models.py)
+    python scripts/pose6d_prepare_data.py --version-name scalarfield_radiusremoval_cadnormalization_bestsymmplanes --uids-file sample.txt
 """
 
 EXTERNAL_DIR = Path(__file__).resolve().parents[1] / "external"
@@ -64,12 +68,16 @@ def run_pT(
     scenes: dict[str, tuple[int, ...]] | None,
     uids: list[str] | None,
 ) -> None:
-    params = ExtractParams(cfg.n_points, cfg.min_visib, cfg.outliers)
+    params = ExtractParams(
+        cfg.n_points, cfg.min_visib, cfg.outliers, cfg.cluster, cfg.sphere
+    )
     datasets = {uid_dataset(u) for u in uids} if uids else (scenes or cfg.scenes)
 
     for dataset in datasets:
         loader = loader_from_env(dataset)
         obj_ids = loader.symmetric_obj_ids()
+        if dataset in cfg.objects:
+            obj_ids = obj_ids & set(cfg.objects[dataset])
         out_dir = layout.points_dir(dataset, cfg.name)
         manifest_path = layout.pT_manifest(dataset, cfg.name)
         manifest = read_manifest(manifest_path)
@@ -134,6 +142,8 @@ def run_for_version(
         exp.canonical_samples,
         exp.seed,
         exp.normalize_target,
+        exp.normalize_by,
+        exp.symmetry_planes,
     )
 
     write_manifest(
@@ -143,6 +153,7 @@ def run_for_version(
             "pT": exp.pT,
             "pT_params": pT_cfg.params(),
             "dgedi_dim": exp.dgedi_dim,
+            "input_params": exp.input_params(),
             "target_params": exp.target_params(),
         },
     )
@@ -152,8 +163,12 @@ def run_for_version(
     ]
     if not pending_inputs:
         return None
+    # one pT path per line, followed by the diameter that divides it when it's not the pT one
+    lines = [str(p) for p in pending_inputs]
+    if exp.dgedi_normalize_by == "model":
+        lines = [f"{line}\t{model_diameter(Path(line).stem)}" for line in lines]
     work_list = layout.dgedi_inputs(exp.name)
-    work_list.write_text("\n".join(str(p) for p in pending_inputs) + "\n")
+    work_list.write_text("\n".join(lines) + "\n")
     return (
         f"# {exp.name}: {len(pending_inputs)} instances\n"
         f"{EXTERNAL_DIR / 'dgedi_env/bin/python'} {EXTERNAL_DIR / 'extract_dgedi_features.py'} "
@@ -229,11 +244,18 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         help="Only these instance uids. Needs --config-name or --version-name.",
     )
+    subset.add_argument(
+        "--uids-file",
+        type=Path,
+        help="Like --uids, one uid per line.",
+    )
 
     p.add_argument("--pT-toml", type=Path, default=PT_TOML)
     p.add_argument("--symm-toml", type=Path, default=SYMM_TOML)
 
     args = p.parse_args()
+    if args.uids_file:
+        args.uids = args.uids_file.read_text().split()
     if (args.scenes or args.uids) and not (args.config_name or args.version_name):
         p.error("--scenes/--uids need --config-name or --version-name")
     return args

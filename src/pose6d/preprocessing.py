@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from collections import Counter, defaultdict
 from collections.abc import Iterator
@@ -8,11 +9,17 @@ import torch
 from pose6d.loader import BOPLoader, loader_from_env
 from pose6d.features import compute_canonical_symmetry_field
 from pose6d.geometry_utils import (
+    BAND,
+    MATCHED,
+    UNMATCHED,
     isolate_object_points,
     backproject_depth,
+    median_spacing,
     sample_farthest_points,
     propagate_symmetry_to_target,
     point_cloud_diameter,
+    symmetric_correspondence,
+    to_object_frame,
 )
 import open3d as o3d
 
@@ -32,6 +39,8 @@ class ExtractParams:
     n_points: int
     min_visib: float
     outliers: dict | None = None  # {"nb_neighbors": int, "std": float}
+    cluster: dict | None = None  # {"eps": mm, "min_points": int}, keeps the largest DBSCAN cluster
+    sphere: dict | None = None  # {"k": float}, keeps ||p - t|| <= k * CAD radius (GT pose)
 
 
 # status is "ok" when points were extracted, otherwise the discard reason:
@@ -85,13 +94,32 @@ def extract_frame_instances(
             depth = loader.load_depth(scene_id, img_id)
         pts = isolate_object_points(depth, mask, K, depth_scale)
 
+        # outlier removal before FPS: CAD sphere, statistical, then the largest cluster
         ratio = 0.0
-        if params.outliers and len(pts) >= params.n_points:
-            outlier_mask = get_outliers_mask(
-                pts, params.outliers["nb_neighbors"], params.outliers["std"]
-            )
-            ratio = float(outlier_mask.sum() / pts.shape[0])
-            pts = pts[~outlier_mask]
+        if len(pts) >= params.n_points and (
+            params.sphere or params.outliers or params.cluster
+        ):
+            n_raw = len(pts)
+            if params.sphere:
+                radius = cad_radius(loader.paths.model_path(instance.obj_id))
+                pts = pts[
+                    ~object_sphere_outliers_mask(
+                        pts, instance.t, params.sphere["k"] * radius
+                    )
+                ]
+            if params.outliers:
+                pts = pts[
+                    ~get_outliers_mask(
+                        pts, params.outliers["nb_neighbors"], params.outliers["std"]
+                    )
+                ]
+            if params.cluster:
+                pts = pts[
+                    ~largest_cluster_outliers_mask(
+                        pts, params.cluster["eps"], params.cluster["min_points"]
+                    )
+                ]
+            ratio = 1 - len(pts) / n_raw
 
         # checked after outlier removal, FPS can't sample more points than available
         if len(pts) < params.n_points:
@@ -194,34 +222,68 @@ def extract_uids(
 
 
 # ------ symmetry field target
+# Scale (mm) that divides the target of one instance:
+#   "pT"    diameter of the partial cloud, like dGeDi does with its input (changes with
+#           the view and with the outliers left in the pT)
+#   "model" diameter of the object mesh (models_info.json), the same for every instance
+TARGET_SCALES = ("pT", "model")
+
+
+def target_scale(
+    normalize_by: str, points: np.ndarray, loader: BOPLoader, obj_id: int
+) -> float:
+    if normalize_by == "pT":
+        return point_cloud_diameter(points)
+    if normalize_by == "model":
+        return loader.load_models_info()[obj_id].diameter
+    raise ValueError(f"normalize_by must be one of {TARGET_SCALES}, got {normalize_by!r}")
+
+
+def model_diameter(uid: str) -> float:
+    """Diameter (mm, models_info.json) of the object of an instance uid."""
+    dataset, _, _, obj_id, _ = BOPLoader.parse_instance_uid(uid)
+    return _models_info(dataset)[obj_id].diameter
+
+
+@lru_cache
+def _models_info(dataset: str) -> dict:
+    return loader_from_env(dataset).load_models_info()
+
+
 def compute_targets(
     points_paths: dict[str, Path],
     target_dir: Path,
     canonical_samples: int = 20000,
     seed: int = 0,
     normalize_target: bool = True,
+    normalize_by: str = "pT",
+    symmetry_planes: dict[str, dict[int, int]] | None = None,
 ) -> None:
     """
     Propagates the canonical symmetry field of each object to its pT (uid -> pT path)
     and saves it in target_dir. The mesh sampling is seeded so targets are reproducible.
     Saves `scale` too (1.0 when not normalized): target * scale is in mm.
+    normalize_by picks the diameter used as scale (see target_scale).
+    symmetry_planes: dataset -> obj_id -> candidate plane index (BOPLoader.load_symmetry_plane),
+    objects not listed keep the legacy plane.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     loaders: dict[str, BOPLoader] = {}
-    canonical: dict[tuple[Path, int], tuple[np.ndarray, np.ndarray]] = {}
+    canonical: dict[tuple[Path, int, int | None], tuple[np.ndarray, np.ndarray]] = {}
 
     for i, (uid, points_path) in enumerate(points_paths.items(), start=1):
         dataset, scene_id, img_id, obj_id, inst_idx = BOPLoader.parse_instance_uid(uid)
         if dataset not in loaders:
             loaders[dataset] = loader_from_env(dataset)
         loader = loaders[dataset]
+        plane_index = (symmetry_planes or {}).get(dataset, {}).get(obj_id)
 
         # keyed by models dir: lmo/pbr share models, but ycbv obj ids mean other objects
-        key = (loader.paths.models_dir, obj_id)
+        key = (loader.paths.models_dir, obj_id, plane_index)
         if key not in canonical:
             torch.manual_seed(seed)
             canonical[key] = compute_canonical_symmetry_field(
-                loader, obj_id, canonical_samples
+                loader, obj_id, canonical_samples, plane_index
             )
         mesh_points, symmetry_scalar = canonical[key]
 
@@ -230,8 +292,11 @@ def compute_targets(
         target = propagate_symmetry_to_target(
             mesh_points, symmetry_scalar, points, instance.R, instance.t
         )
-        # Like dGeDi does with its input: divide by the diameter of the pT
-        scale = point_cloud_diameter(points) if normalize_target else 1.0
+        scale = (
+            target_scale(normalize_by, points, loader, obj_id)
+            if normalize_target
+            else 1.0
+        )
         np.savez(
             target_dir / f"{uid}.npz",
             target=(target / scale).astype(np.float32),
@@ -239,6 +304,58 @@ def compute_targets(
         )
         if i % 1000 == 0:
             log.info(f"targets: {i}/{len(points_paths)}")
+
+
+# ------ symmetry available in the pT
+def available_symmetry(
+    points_paths: dict[str, Path],
+    band_pct: float = 0.10,
+    k_tol: float = 2.0,
+    canonical_samples: int = 20000,
+    seed: int = 0,
+    symmetry_planes: dict[str, dict[int, int]] | None = None,
+) -> list[dict]:
+    """
+    One row per uid (uid -> pT path) with the symmetric_correspondence summary, on the
+    same plane as the target (BOPLoader.load_symmetry_plane, symmetry_planes as in compute_targets):
+      band = band_pct * field_range (CAD), tol = k_tol * median spacing of the pT
+      available_symm = matched / (matched + unmatched), points outside the band only
+    """
+    loaders: dict[str, BOPLoader] = {}
+    planes: dict[tuple[Path, int, int | None], tuple[np.ndarray, np.ndarray, float]] = {}
+    rows = []
+    for uid, points_path in points_paths.items():
+        dataset, scene_id, img_id, obj_id, inst_idx = BOPLoader.parse_instance_uid(uid)
+        if dataset not in loaders:
+            loaders[dataset] = loader_from_env(dataset)
+        loader = loaders[dataset]
+        plane_index = (symmetry_planes or {}).get(dataset, {}).get(obj_id)
+
+        # field_range: max of the canonical field, half extent of the CAD along the normal
+        key = (loader.paths.models_dir, obj_id, plane_index)
+        if key not in planes:
+            torch.manual_seed(seed)
+            _, field = compute_canonical_symmetry_field(loader, obj_id, canonical_samples, plane_index)
+            plane = loader.load_symmetry_plane(obj_id, plane_index)
+            planes[key] = (plane.normal.numpy(), plane.plane_point.numpy(), float(field.max()))
+        normal, plane_point, field_range = planes[key]
+
+        instance = loader.load_instances(scene_id, img_id)[inst_idx]
+        points = to_object_frame(np.load(points_path)["points"], instance.R, instance.t)
+        band, tol = band_pct * field_range, k_tol * median_spacing(points)
+        labels = symmetric_correspondence(points, normal, plane_point, band, tol)
+        n_matched, n_unmatched = (labels == MATCHED).sum(), (labels == UNMATCHED).sum()
+        rows.append(
+            {
+                "uid": uid,
+                "field_range": field_range,
+                "band": band,
+                "tol": tol,
+                "frac_band": float((labels == BAND).mean()),
+                "available_symm": n_matched / max(n_matched + n_unmatched, 1),
+            }
+        )
+    return rows
 
 
 def extract_frames_pcs(loader: BOPLoader, scene_id, img_id) -> tuple[str, np.ndarray]:
@@ -283,3 +400,51 @@ def get_outliers_mask(pts: np.ndarray, nb_neighbors: float, std: float):
     outlier_mask = np.ones(pts.shape[0], dtype=bool)
     outlier_mask[ind_idx] = False
     return outlier_mask
+
+
+# ------ alternative outlier masks (compared in notebooks/pose6d_outlier_removal.py)
+# All of them return a boolean mask, True = outlier, like get_outliers_mask.
+def radius_outliers_mask(pts: np.ndarray, nb_points: int, radius: float) -> np.ndarray:
+    """Outlier: fewer than nb_points neighbors within radius (mm)."""
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts)
+    _, ind = pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
+    outlier_mask = np.ones(pts.shape[0], dtype=bool)
+    outlier_mask[np.asarray(ind, dtype=int)] = False
+    return outlier_mask
+
+
+def largest_cluster_outliers_mask(pts: np.ndarray, eps: float, min_points: int) -> np.ndarray:
+    """Outlier: not in the largest DBSCAN cluster (eps in mm). Removes groups of points
+    separated from the object, which the statistical removal keeps."""
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts)
+    labels = np.asarray(pcd.cluster_dbscan(eps=eps, min_points=min_points))
+    if (labels < 0).all():
+        return np.zeros(pts.shape[0], dtype=bool)
+    return labels != np.bincount(labels[labels >= 0]).argmax()
+
+
+@lru_cache
+def cad_radius(model_path: Path) -> float:
+    """Radius (mm) of the CAD around its origin: max ||v|| of the mesh vertices. The GT
+    translation t is that origin in the camera frame. Not diameter / 2: the BOP diameter
+    doesn't depend on the origin (eggbox 83.0 vs 82.3, glue 91.8 vs 87.9, up to 17% more on
+    the other lmo objects)."""
+    vertices = np.asarray(o3d.io.read_triangle_mesh(str(model_path)).vertices)
+    return float(np.linalg.norm(vertices, axis=1).max())
+
+
+def object_sphere_outliers_mask(
+    pts: np.ndarray, center: np.ndarray, radius: float
+) -> np.ndarray:
+    """Outlier: farther than radius (mm) from center, the GT translation of the object.
+    Like SAM-6D training (radius = 1.2 * object radius), but with the CAD radius."""
+    return np.linalg.norm(pts - np.asarray(center).reshape(1, 3), axis=1) > radius
+
+
+def depth_outliers_mask(pts: np.ndarray, max_deviation: float) -> np.ndarray:
+    """Outlier: depth (camera z) farther than max_deviation (mm) from the median depth of
+    the instance. With max_deviation ~ the model diameter it drops mask pixels that hit the
+    background."""
+    return np.abs(pts[:, 2] - np.median(pts[:, 2])) > max_deviation
