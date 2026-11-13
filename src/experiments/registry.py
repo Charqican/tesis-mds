@@ -2,6 +2,7 @@ import math
 from dataclasses import dataclass
 from itertools import product
 
+import numpy as np
 import torch
 
 from experiments.analysis import uid_info
@@ -49,6 +50,28 @@ def per_object_base_split(uids: list[str], extended: bool = False) -> Splits:
     ).subset(uids)
 
 
+# pbr -> real: train/val from the sampled pbr uids (notebooks/per_object_models.py 8, 275 per
+# object per scene, ~13.7k per object with pT), val = PBR_VAL_SCENES whole scenes per pbr dataset
+# (the images of a scene share the object layout), test = the 400 real test uids of per-object-base
+PBR_DATASETS = ("pbr", "ycbv-pbr")
+PBR_VAL_SCENES = 8
+
+
+def pbr_real_split(uids: list[str], seed: int = 0) -> Splits:
+    pbr = sorted(u for u in uids if uid_dataset(u) in PBR_DATASETS)
+    scene = {u: BOPLoader.parse_instance_uid(u)[1] for u in pbr}
+    rng = np.random.RandomState(seed)
+    val_scenes = {
+        d: set(rng.choice(sorted({scene[u] for u in pbr if uid_dataset(u) == d}), PBR_VAL_SCENES, replace=False))
+        for d in PBR_DATASETS
+    }
+    is_val = {u: scene[u] in val_scenes[uid_dataset(u)] for u in pbr}
+    base_test = Splits.load(CONFIGS_DIR / "splits" / PER_OBJECT_VERSION / "per-object-base.json").test
+    return Splits(
+        train=[u for u in pbr if not is_val[u]], val=[u for u in pbr if is_val[u]], test=sorted(base_test)
+    )
+
+
 # Splits are static to compare them between runs and experiments
 SPLITS = {
     "lmo-strat": lambda uids: Splits.stratified(
@@ -69,6 +92,8 @@ SPLITS = {
     "per-object-base": per_object_base_split,
     # same val/test, train = all the remaining uids of the scene (visib >= 0.6, outside the gaps)
     "per-object-base-extended": lambda uids: per_object_base_split(uids, extended=True),
+    # the JSON is written locally from pbr_available.txt (the local versions have no pbr uids)
+    "pbr-real": pbr_real_split,
 }
 
 
@@ -333,6 +358,10 @@ OPTIMIZER_SPECS_PBR_REAL = [
 ]
 
 
+# train uids per object of "pbr-real" (11.4k-11.6k, within 1 %: one value for the early stopping)
+PBR_REAL_N_TRAIN = 11_500
+
+
 def pbr_real_experiment(
     name: str,
     obj_id: int,
@@ -443,6 +472,18 @@ _EXPERIMENTS = [
             ("woodblock-diag", 16, PER_OBJECT_VERSION_WOODDIAG),
         ]
         if not (suffix and name == "glue")  # glue is the floor: its extended train is the base one
+    ),
+    # pbr -> real (split "pbr-real"): all the pbr train uids of the object (~11.5k), bs 256,
+    # MLP5 dropout 0/0.2, Adam constant lr, 3 seeds (6 runs each)
+    *(
+        pbr_real_experiment(f"pbr-real_{name}", obj_id, "pbr-real", PBR_REAL_N_TRAIN, version)
+        for name, obj_id, version in [
+            ("eggbox", 10, PER_OBJECT_VERSION),
+            ("glue", 11, PER_OBJECT_VERSION),
+            ("masterchefcan", 1, PER_OBJECT_VERSION),
+            ("woodblock-z", 16, PER_OBJECT_VERSION),
+            ("woodblock-diag", 16, PER_OBJECT_VERSION_WOODDIAG),
+        ]
     ),
 ]
 REGISTRY: dict[str, Experiment] = {e.name: e for e in _EXPERIMENTS}
