@@ -39,6 +39,7 @@ experiments = [
 	"sns>=0.1",
 	"mlflow>=3.16.0",
 	"questionary>=2.1.1",
+	"great-tables>=1.1.0",
 ]
 6dpose = [
 	"numpy>=2.0.0",
