@@ -30,6 +30,22 @@ data when a split is assigned, fitting the normalizer on train only.
 SPLIT_NAMES = ("train", "val", "test")
 
 
+def _representative_block(img_ids, visib_fract, n_frames, free) -> np.ndarray:
+    """Indices of the n_frames consecutive free frames (img_ids sorted) whose visib_fract mean
+    and p10 are closest to those of all the frames."""
+    target = np.array([visib_fract.mean(), np.percentile(visib_fract, 10)])
+    best, best_score = None, np.inf
+    for start in range(len(img_ids) - n_frames + 1):
+        window = np.arange(start, start + n_frames)
+        if not free[window].all() or img_ids[window[-1]] - img_ids[start] != n_frames - 1:
+            continue
+        stats = np.array([visib_fract[window].mean(), np.percentile(visib_fract[window], 10)])
+        score = np.abs(stats - target).sum()
+        if score < best_score:
+            best, best_score = window, score
+    return best
+
+
 @dataclass
 class Splits:
     train: list[str] = field(default_factory=list)
@@ -91,6 +107,103 @@ class Splits:
             splits.test += obj_uids[:n_test]
             splits.val += obj_uids[n_test : n_test + n_val]
             splits.train += obj_uids[n_test + n_val :]
+        return cls(*(sorted(s) for s in (splits.train, splits.val, splits.test)))
+
+    # n_test test uids per object, the rest split into train/val. Objects with uids in
+    # test_pool take their test from it (the pool uids left over are dropped, so an old test
+    # uid never ends up in train). The others take n_test random uids, or with block=True
+    # n_test consecutive frames of one scene: in a video the neighbours of a random frame
+    # are almost the same view. Each object is shuffled on its own, like stratified.
+    @classmethod
+    def per_object(
+        cls,
+        uids: list[str],
+        n_test: int,
+        val_frac: float,
+        test_pool: set[str] | None = None,
+        block: bool = False,
+        seed: int = 0,
+    ) -> "Splits":
+        by_obj: dict[tuple[str, int], list[str]] = {}
+        for uid in sorted(uids):
+            dataset, _, _, obj_id, _ = BOPLoader.parse_instance_uid(uid)
+            by_obj.setdefault((dataset, obj_id), []).append(uid)
+
+        splits = cls()
+        for (_, obj_id), obj_uids in sorted(by_obj.items()):
+            rng = random.Random(seed * 1000 + obj_id)
+            pool = sorted(set(obj_uids) & (test_pool or set()))
+            if pool:
+                test = rng.sample(pool, n_test)
+                rest = sorted(set(obj_uids) - set(pool))
+            elif block:
+                scene_of = [BOPLoader.parse_instance_uid(u)[1] for u in obj_uids]
+                starts = [
+                    i
+                    for i in range(len(obj_uids) - n_test + 1)
+                    if scene_of[i] == scene_of[i + n_test - 1]
+                ]
+                start = rng.choice(starts)
+                test = obj_uids[start : start + n_test]
+                rest = obj_uids[:start] + obj_uids[start + n_test :]
+            else:
+                test = rng.sample(obj_uids, n_test)
+                rest = sorted(set(obj_uids) - set(test))
+            rng.shuffle(rest)
+            n_val = int(len(rest) * val_frac)
+            splits.test += test
+            splits.val += rest[:n_val]
+            splits.train += rest[n_val:]
+        return cls(*(sorted(s) for s in (splits.train, splits.val, splits.test)))
+
+    # Same train/val/test sizes for every object, the smallest one fixes them: n_test test,
+    # val_frac of the rest val, the rest train. lmo test and val are random. Other datasets
+    # (videos) take test, then val, as the block of consecutive frames whose visib_fract mean and
+    # p10 are closest to those of all the frames, with `gap` frames around each block left out.
+    # Train is evenly spaced in frame order among the rest (the camera path is kept), the rest
+    # is unused. uids: one scene per object. Written in notebooks/per_object_models.py (5.6),
+    # the random draws are the same as there (pandas sample with random_state=seed).
+    @classmethod
+    def per_object_base(
+        cls,
+        uids: list[str],
+        visib_fract: dict[str, float],
+        n_test: int,
+        val_frac: float,
+        gap: int,
+        seed: int = 0,
+        extended: bool = False,
+    ) -> "Splits":
+        """extended: same val/test, train = every remaining uid instead of n_train evenly spaced."""
+        by_obj: dict[tuple[str, int], list[str]] = {}
+        for uid in sorted(uids):
+            dataset, _, _, obj_id, _ = BOPLoader.parse_instance_uid(uid)
+            by_obj.setdefault((dataset, obj_id), []).append(uid)
+        n_rest = min(map(len, by_obj.values())) - n_test
+        n_val = round(val_frac * n_rest)
+        n_train = n_rest - n_val
+
+        test_rng = np.random.RandomState(seed)  # one for every object, in this order
+        splits = cls()
+        for (dataset, _), obj_uids in sorted(by_obj.items()):
+            img_ids = np.array([BOPLoader.parse_instance_uid(u)[2] for u in obj_uids])
+            visib = np.array([visib_fract[u] for u in obj_uids])
+            part = np.full(len(obj_uids), "train", dtype=object)
+            if dataset == "lmo":
+                part[test_rng.permutation(len(obj_uids))[:n_test]] = "test"
+                rest = np.flatnonzero(part == "train")
+                part[rest[np.random.RandomState(seed).permutation(len(rest))[:n_val]]] = "val"
+            else:
+                for name, n_frames in [("test", n_test), ("val", n_val)]:
+                    block = _representative_block(img_ids, visib, n_frames, part == "train")
+                    near = (img_ids >= img_ids[block[0]] - gap) & (img_ids <= img_ids[block[-1]] + gap)
+                    part[near & (part == "train")] = "gap"
+                    part[block] = name
+            rest = np.flatnonzero(part == "train")
+            kept = rest if extended else rest[np.round(np.linspace(0, len(rest) - 1, n_train)).astype(int)]
+            splits.train += [obj_uids[i] for i in kept]
+            splits.val += [u for u, p in zip(obj_uids, part) if p == "val"]
+            splits.test += [u for u, p in zip(obj_uids, part) if p == "test"]
         return cls(*(sorted(s) for s in (splits.train, splits.val, splits.test)))
 
     def subset(self, uids: list[str]) -> "Splits":
@@ -200,8 +313,13 @@ class SymmetryFieldDataset:
     ):
         self.input_dir = layout.input_dir(version)
         self.target_dir = layout.target_dir(version)
+        # uids with both target and input: a version can have targets whose dgedi input was
+        # never computed (e.g. objects dropped from the dgedi work list)
+        input_uids = {path.stem for path in self.input_dir.glob("*.npz")}
         self.uids = []
         for path in sorted(self.target_dir.glob("*.npz")):
+            if path.stem not in input_uids:
+                continue
             dataset, scene_id, _, obj_id, _ = BOPLoader.parse_instance_uid(path.stem)
             if obj_ids is not None and obj_id not in obj_ids:
                 continue
