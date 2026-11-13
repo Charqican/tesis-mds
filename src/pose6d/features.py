@@ -90,7 +90,7 @@ class MeshFeatureExtractor:
 # function used by the pT extractor script. It directly uses the MeshFeatureExtractor
 # WARNING: this function is coupled to the LMODataset, but can be easily be decoupled in the future
 def compute_canonical_symmetry_field(
-    loader: BOPLoader, obj_id: int, n_sample_points=20000
+    loader: BOPLoader, obj_id: int, n_sample_points=20000, plane_index: int | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Helper function that calls MeshFeatureExtractor from this module.
@@ -99,7 +99,7 @@ def compute_canonical_symmetry_field(
     Returns (mesh_points, symmetry_scalar).
     """
     config = loader.cfg
-    symmetry_data = loader.load_symmetry_plane(obj_id)
+    symmetry_data = loader.load_symmetry_plane(obj_id, plane_index)
     if symmetry_data is None:
         raise ValueError(f"No symmetry plane metadata for obj_id={obj_id}")
 

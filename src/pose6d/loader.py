@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from .config import LMOConfig, PBRConfig, TLESSConfig, YCBVConfig
+from .geometry_utils import candidate_plane_normals
 
 import numpy as np
 import torch
@@ -96,8 +97,9 @@ class BOPLoader:
     iter_frames(scene_id):
         returns an iterator of FrameData of every image inside a scene
 
-    load_symmetry_plane(obj_id):
-        returns a SymmetryData if the object has symmetries, None if not. It only returns one plane.
+    load_symmetry_plane(obj_id, plane_index=None):
+        returns a SymmetryData if the object has symmetries, None if not. plane_index picks a
+        candidate of geometry_utils.candidate_plane_normals, None keeps the legacy plane.
 
     symmetric_obj_ids():
         returns every symmetric object id.
@@ -182,8 +184,12 @@ class BOPLoader:
             )
         return result
 
-    # WARNING: only one symmetry
-    def load_symmetry_plane(self, obj_id: int) -> SymmetryData | None:
+    # plane_index None: legacy plane, the eigenvector of the smallest eigenvalue of the first
+    # symmetry (kept so the existing versions are reproducible, it can be a non mirror plane).
+    # plane_index int: that candidate of geometry_utils.candidate_plane_normals
+    def load_symmetry_plane(
+        self, obj_id: int, plane_index: int | None = None
+    ) -> SymmetryData | None:
         with open(self.paths.models_info) as f:
             info = json.load(f)
 
@@ -195,9 +201,13 @@ class BOPLoader:
         if not symmetries:
             return None
 
-        return self._parse_symmetry_matrix(
-            symmetries[0]
-        )  # harcoded to 1 plane of symmetry, this could change in the future
+        if plane_index is None:
+            return self._parse_symmetry_matrix(symmetries[0])
+        transforms = [np.asarray(T, dtype=np.float64).reshape(4, 4) for T in symmetries]
+        normal = candidate_plane_normals(transforms)[plane_index]
+        return SymmetryData(
+            torch.tensor(normal, dtype=torch.float32), torch.zeros(3, dtype=torch.float32)
+        )
 
     # --- Image loading ---
     def load_depth(self, scene_id: int, img_id: int) -> np.ndarray:
@@ -343,6 +353,16 @@ class YCBVLoader(BOPLoader):
         return cls(YCBVConfig.from_root(root))
 
 
+class YCBVPBRLoader(BOPLoader):
+    """BOPLoader over YCB-V train_pbr scenes; models are the ycbv ones (YCBV_ROOT/ycbv_models)."""
+
+    dataset_name = "ycbv-pbr"
+
+    @classmethod
+    def from_roots(cls, root: str | Path, model_root: str | Path) -> "YCBVPBRLoader":
+        return cls(PBRConfig.from_roots(root, model_root))
+
+
 class TLESSLoader(BOPLoader):
     """BOPLoader over T-LESS test scenes (primesense); models live in root/models_cad."""
 
@@ -386,6 +406,10 @@ def build_loader(
         return PBRLoader.from_roots(dataset_root, model_root)
     if dataset_type == "ycbv":
         return YCBVLoader.from_root(dataset_root)
+    if dataset_type == "ycbv-pbr":
+        if model_root is None:
+            raise ValueError("ycbv-pbr requires model_root")
+        return YCBVPBRLoader.from_roots(dataset_root, model_root)
     if dataset_type == "tless":
         return TLESSLoader.from_root(dataset_root)
     if dataset_type == "tless-pbr":
@@ -393,8 +417,9 @@ def build_loader(
     raise ValueError(f"Unknown dataset type: {dataset_type}")
 
 
-# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT, YCBV_ROOT, TLESS_ROOT).
-# pbr uses the lmo object models; tless and tless-pbr share TLESS_ROOT.
+# Dataset roots are machine dependent, so they live in .env (LMO_ROOT, PBR_ROOT, YCBV_ROOT,
+# YCBV_PBR_ROOT, TLESS_ROOT). pbr uses the lmo object models, ycbv-pbr the ycbv ones (its
+# scenes can live in another disk); tless and tless-pbr share TLESS_ROOT.
 def loader_from_env(dataset_type: str) -> BOPLoader:
     def env(var: str) -> str:
         value = os.environ.get(var)
@@ -406,6 +431,10 @@ def loader_from_env(dataset_type: str) -> BOPLoader:
         return build_loader("pbr", env("PBR_ROOT"), env("LMO_ROOT"))
     if dataset_type == "ycbv":
         return build_loader("ycbv", env("YCBV_ROOT"))
+    if dataset_type == "ycbv-pbr":
+        return build_loader(
+            "ycbv-pbr", env("YCBV_PBR_ROOT"), Path(env("YCBV_ROOT")) / "ycbv_models"
+        )
     if dataset_type in ("tless", "tless-pbr"):
         return build_loader(dataset_type, env("TLESS_ROOT"))
     return build_loader(dataset_type, env("LMO_ROOT"))
