@@ -350,12 +350,19 @@ def train_kwargs_by_steps(n_train: int, batch_size: int) -> dict:
     return {**TRAIN_KWARGS, **epochs}
 
 
-# grid of the base experiments reduced to what mattered there (architecture): MLP5 with and
-# without dropout, Adam with constant lr
-MODEL_SPECS_PBR_REAL = MODEL_SPECS_PER_OBJECT[:2]
-OPTIMIZER_SPECS_PBR_REAL = [
-    spec for spec in OPTIMIZER_SPECS_PER_OBJECT_GRID if spec[0] is torch.optim.Adam and spec[2] is None
-]
+# full grid of the base experiments (MODEL_SPECS_PER_OBJECT x OPTIMIZER_SPECS_PER_OBJECT_GRID),
+# schedulers rescaled like the early stopping (they step per epoch): cosine over the new
+# max_epochs, StepLR every 500 base epochs -> the same number of gradient steps
+def scaled_optimizer_grid(train_kwargs: dict) -> list:
+    ratio = train_kwargs["max_epochs"] / TRAIN_KWARGS["max_epochs"]
+    specs = []
+    for opt, opt_kw, sched, sched_kw in OPTIMIZER_SPECS_PER_OBJECT_GRID:
+        if sched is torch.optim.lr_scheduler.CosineAnnealingLR:
+            sched_kw = {"T_max": train_kwargs["max_epochs"]}
+        elif sched is torch.optim.lr_scheduler.StepLR:
+            sched_kw = {**sched_kw, "step_size": max(1, round(sched_kw["step_size"] * ratio))}
+        specs.append((opt, opt_kw, sched, sched_kw))
+    return specs
 
 
 # train uids per object of "pbr-real" (11.4k-11.6k, within 1 %: one value for the early stopping)
@@ -372,18 +379,19 @@ def pbr_real_experiment(
     seeds: tuple[int, ...] = (0, 1, 2),
 ) -> Experiment:
     """n_train: train uids of the split, sets the early stopping in epochs (train_kwargs_by_steps)."""
+    train_kwargs = train_kwargs_by_steps(n_train, batch_size)
     return Experiment(
         name=name,
         configs=build_configs(
             experiment_name=name,
             split=split,
             obj_ids={obj_id},
-            model_specs=MODEL_SPECS_PBR_REAL,
+            model_specs=MODEL_SPECS_PER_OBJECT,
             batch_sizes=[batch_size],
-            optimizer_specs=OPTIMIZER_SPECS_PBR_REAL,
+            optimizer_specs=scaled_optimizer_grid(train_kwargs),
             data_version=data_version,
             seeds=seeds,
-            **train_kwargs_by_steps(n_train, batch_size),
+            **train_kwargs,
         ),
     )
 
@@ -474,7 +482,7 @@ _EXPERIMENTS = [
         if not (suffix and name == "glue")  # glue is the floor: its extended train is the base one
     ),
     # pbr -> real (split "pbr-real"): all the pbr train uids of the object (~11.5k), bs 256,
-    # MLP5 dropout 0/0.2, Adam constant lr, 3 seeds (6 runs each)
+    # full grid of the base x 3 seeds (54 runs each, 270 total), schedulers rescaled
     *(
         pbr_real_experiment(f"pbr-real_{name}", obj_id, "pbr-real", PBR_REAL_N_TRAIN, version)
         for name, obj_id, version in [
